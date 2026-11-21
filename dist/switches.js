@@ -18,7 +18,7 @@ function enhanceSelectors() {
       group.append(button);
       button.onclick = event => {
         event.preventDefault();
-        if (select.value === option.value) return;
+        if (select.value === option.value && select.id !== 'universeCap') return;
         select.value = option.value;
         select.dispatchEvent(new Event('change',{bubbles:true}));
         sync();

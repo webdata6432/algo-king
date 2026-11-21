@@ -50,23 +50,32 @@ function simulate(rows,p){
     let overnight=p.holding==='Positional',exitDay=d;
     let a=day.filter(r=>r.m>=p.entry&&r.m<=(overnight?929:p.exit));
     if(overnight){let dates=[...groups.keys()],next=dates[dates.indexOf(d)+1];if(!next||(p.expiry&&next>p.expiry)||p.exit>929||p.entry<555||a.length!==930-p.entry){skipped.push(d);continue}let tail=groups.get(next).filter(r=>r.m>=555&&r.m<=p.exit);if(tail.length!==p.exit-554){skipped.push(d);continue}exitDay=next;a=a.concat(tail)}
-    if(p.rule && !entryMatches(a[0],p))continue;
+
     if((!overnight&&a.length!==p.exit-p.entry+1)||a[0]?.m!==p.entry||a.at(-1)?.m!==p.exit){skipped.push(d);continue}
-    let sign=p.side==='Buy'?1:-1,slip=p.slip/10000,ep=a[0].o*(1+sign*slip),best=ep,reason='Timed exit',out=a.at(-1).o,m=p.exit;
+    let fill=a[0].o,touched=false;
+    if(['Price above','Price below','Limit price'].includes(p.rule)){
+      const limit=p.ruleValue,buy=p.side==='Buy';
+      const idx=a.findIndex(r=>r.d===d&&(overnight||r.m<p.exit)&&(p.rule==='Price above'?r.o>limit:p.rule==='Price below'?r.o<limit:buy?r.l<=limit:r.h>=limit));
+      if(idx<0)continue;
+      a=a.slice(idx);fill=a[0].o;
+      if(p.rule==='Limit price'){fill=buy?Math.min(fill,limit):Math.max(fill,limit);touched=fill!==a[0].o}
+    }else if(p.rule&&p.rule!=='Market price'&&!entryMatches(a[0],p))continue;
+    let sign=p.side==='Buy'?1:-1,slip=p.slip/10000,ep=p.rule==='Limit price'?(sign>0?Math.min:Math.max)(p.ruleValue,fill*(1+sign*slip)):fill*(1+sign*slip),best=ep,reason='Timed exit',out=a.at(-1).o,m=p.exit;
     let fillDay=exitDay;for(let r of a){
       let fixed=p.stop?ep-sign*distance(p.stop,p.stopUnit,ep,p.qty):null,trail=p.trailX&&fixed!==null?fixed+sign*Math.floor(Math.max(0,sign*(best-ep))/p.trailX)*p.trailY:p.trail?best*(1-sign*p.trail/100):null;
       let stops=[fixed,trail].filter(x=>x!==null),stop=stops.length?(sign>0?Math.max(...stops):Math.min(...stops)):null;
       let target=p.target?ep+sign*distance(p.target,p.targetUnit,ep,p.qty):null,stopName=trail!==null&&stop===trail&&best!==ep?'Trailing stop':'Stop loss';
       let hit=(price,threshold,dir)=>threshold!==null&&dir*(price-threshold)>=0;
-      if(hit(r.o,stop,-sign)){reason=stopName+' at open';out=r.o;m=r.m;fillDay=r.d;break}
-      if(hit(r.o,target,sign)){reason='Target at open';out=r.o;m=r.m;fillDay=r.d;break}
+      if(!(touched&&r===a[0])&&hit(r.o,stop,-sign)){reason=stopName+' at open';out=r.o;m=r.m;fillDay=r.d;break}
+      if(!(touched&&r===a[0])&&hit(r.o,target,sign)){reason='Target at open';out=r.o;m=r.m;fillDay=r.d;break}
       if(r.d===exitDay&&r.m===p.exit)break;
       if(hit(sign>0?r.l:r.h,stop,-sign)){reason=stopName;out=stop;m=r.m;fillDay=r.d;break}
+      if(touched&&r===a[0])continue;
       if(hit(sign>0?r.h:r.l,target,sign)){reason='Target';out=target;m=r.m;fillDay=r.d;break}
       best=sign>0?Math.max(best,r.h):Math.min(best,r.l);
     }
     let xp=out*(1-sign*slip),gross=sign*(xp-ep)*p.qty,charges=costs(p,ep,xp),net=gross-charges;
     if(overnight&&fillDay!==d)busyUntil=fillDay;cum+=net;peak=Math.max(peak,cum);dd=Math.min(dd,cum-peak);
-    trades.push({d:fillDay,entryDay:d,entry:timeOf(p.entry),exit:timeOf(m),ep,xp,gross,charges,net,cum,dd:cum-peak,reason,tip:fillDay+' '+timeOf(m)+' IST\nTrade ₹'+fmt(net)+'\nCumulative ₹'+fmt(cum)+'\nDrawdown ₹'+fmt(cum-peak)});
+    trades.push({d:fillDay,entryDay:d,entry:timeOf(a[0].m),exit:timeOf(m),ep,xp,gross,charges,net,cum,dd:cum-peak,reason,tip:fillDay+' '+timeOf(m)+' IST\nTrade ₹'+fmt(net)+'\nCumulative ₹'+fmt(cum)+'\nDrawdown ₹'+fmt(cum-peak)});
   }return {trades,skipped,net:cum,dd,ret:trades.length?100*cum/trades.reduce((v,t)=>v+p.qty*t.ep,0):0,win:100*trades.filter(t=>t.net>0).length/(trades.length||1),p}
 }
