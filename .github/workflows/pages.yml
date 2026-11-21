@@ -22,7 +22,7 @@ jobs:
         run: |
           python3 sync_market.py
           python3 sync_contracts.py
-          git add dist/market/daily.json dist/market/contracts.json
+          git add dist/market/*.json
           if ! git diff --cached --quiet; then
             git -c user.name="Market Sync" -c user.email="market-sync@users.noreply.github.com" commit -m "Refresh NSE daily history"
             git push

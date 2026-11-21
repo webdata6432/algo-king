@@ -14,7 +14,7 @@ Deno.serve(async req=>{
  if(!/^[A-Z0-9& -]{1,32}$/.test(s)||![from,to].every(v=>/^\d{4}-\d{2}-\d{2}$/.test(v)))return Response.json({error:"Invalid symbol or dates"},{headers,status:400});
  const start=Date.parse(from+"T00:00:00+05:30")/1000,end=Date.parse(to+"T00:00:00+05:30")/1000+86400;
  if(!(end>start&&end-start<=7*86400&&start>Date.now()/1000-30*86400))return Response.json({error:"Minute history is limited to recent sessions. Import a minute CSV for older dates."},{headers,status:422});
- const contract=u.searchParams.get("contract"),key=contract&&/^(NSE|BSE)_FO\|\d+$/.test(contract)?contract:instrumentKeys[s];
+ const contract=u.searchParams.get("contract"),key=contract&&/^(?:(NSE|BSE)_FO\|\d+|NSE_EQ\|[A-Z0-9]{12})$/.test(contract)?contract:instrumentKeys[s];
  if(key){try{const r=await fetch("https://api.upstox.com/v3/historical-candle/"+encodeURIComponent(key)+"/minutes/1/"+to+"/"+from,{signal:AbortSignal.timeout(9000)});
   const candles=(await r.json()).data?.candles||[],rows=candles.map(([t,o,h,l,c]:[string,number,number,number,number])=>({d:t.slice(0,10),m:Number(t.slice(11,13))*60+Number(t.slice(14,16)),o,h,l,c})).filter((v:any)=>v.d>=from&&v.d<=to&&v.m>=555&&v.m<930&&[v.o,v.h,v.l,v.c].every(n=>Number.isFinite(n)&&n>0)&&v.h>=Math.max(v.o,v.c)&&v.l<=Math.min(v.o,v.c)).sort((a:any,b:any)=>a.d.localeCompare(b.d)||a.m-b.m);
   if(rows.length)return Response.json({source:"Upstox",symbol:s,rows},{headers});

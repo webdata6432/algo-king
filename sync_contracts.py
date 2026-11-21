@@ -13,6 +13,9 @@ for exchange,symbol in [('NSE','NIFTY'),('BSE','SENSEX')]:
     path=os.environ.get(exchange+'_MASTER')
     raw=Path(path).read_bytes() if path else urllib.request.urlopen('https://assets.upstox.com/market-quote/instruments/exchange/'+exchange+'.json.gz',timeout=45).read()
     master=json.loads(gzip.decompress(raw))
+    if exchange=='NSE':
+        shares=sorted([x['trading_symbol'],x.get('short_name') or x.get('name') or x['trading_symbol'],x['instrument_key']] for x in master if x.get('segment')=='NSE_EQ' and x.get('instrument_type') in ('EQ','BE'))
+        Path('dist/market/shares.json').write_text(json.dumps(shares,separators=(',',':')))
     options=[x for x in master if x.get('underlying_symbol')==symbol and x.get('instrument_type') in ('CE','PE')]
     expiries=sorted({x['expiry'] for x in options if datetime.fromtimestamp(x['expiry']/1000,ist).date()>=datetime.now(ist).date()})[:4]
     if not expiries:raise ValueError('No active expiries for '+symbol)
