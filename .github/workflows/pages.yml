@@ -2,9 +2,11 @@ name: Publish Algo King
 on:
   push:
     branches: [main]
+  schedule:
+    - cron: '20 14 * * 1-6'
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 concurrency:
@@ -18,6 +20,16 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+      - name: Sync published exchange reports
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: |
+          python3 sync_market.py
+          python3 sync_contracts.py
+          git add dist/market/daily.json dist/market/contracts.json
+          if ! git diff --cached --quiet; then
+            git -c user.name="Market Sync" -c user.email="market-sync@users.noreply.github.com" commit -m "Refresh NSE daily history"
+            git push
+          fi
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

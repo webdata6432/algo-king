@@ -13,3 +13,15 @@ async function refreshBenchmark(){
 }
 let benchmarkSource='Bundled · historical';
 window.addEventListener('load',refreshBenchmark);
+
+let exchangeDaily=Object.create(null),exchangeStatus='Loading NSE history…';
+async function loadExchangeHistory(){
+ try{const response=await fetch('market/daily.json');if(!response.ok)throw Error();
+ const data=await response.json();for(const [symbol,rows] of Object.entries(data))exchangeDaily[symbol]=rows.map(([d,o,c,prev])=>bar(d,o,c,prev));
+ const dates=Object.values(exchangeDaily).flatMap(rows=>rows.length?[rows.at(-1).d]:[]).sort();
+ if(filters.to===end&&dates.length&&dates.at(-1)>end)filters.to=dates.at(-1);
+ exchangeStatus='NSE end-of-day reports · '+Object.keys(data).length+' instruments · latest session '+dates.at(-1);
+ }catch{exchangeStatus='NSE history unavailable. Retry or import a daily CSV.'}
+ if(document.getElementById('rank'))market();
+}
+window.addEventListener('load',loadExchangeHistory);

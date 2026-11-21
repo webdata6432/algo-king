@@ -13,7 +13,7 @@ Deno.serve(async req=>{
  if(!token)return reply({error:"Sign in first"},401);
  const {data:{user},error}=await admin.auth.getUser(token);
  if(error||!user)return reply({error:"Sign in again"},401);
- const {action,apiKey,accessToken}=await req.json(), table=admin.from("angel_connections");
+ const {action,apiKey,accessToken,symbol}=await req.json(), table=admin.from("angel_connections");
  const aad=enc.encode(user.id);
  if(action==="save"){
  if(typeof apiKey!=="string"||typeof accessToken!=="string"||!apiKey.trim()||!accessToken.trim()||apiKey.length>256||accessToken.length>12000)return reply({error:"Enter valid credentials"},400);
@@ -25,9 +25,24 @@ Deno.serve(async req=>{
  if(action==="disconnect"){const {error}=await table.delete().eq("user_id",user.id);if(error)throw error;return reply({message:"Disconnected"})}
  const {data,error:readError}=await table.select("sealed").eq("user_id",user.id).maybeSingle();if(readError)throw readError;
  if(action==="status"||!data)return reply({message:data?"Credentials saved · test required":"No connection configured"});
- if(action!=="test")return reply({error:"Unknown action"},400);
+ if(action!=="test"&&action!=="quote")return reply({error:"Unknown action"},400);
  const [iv,ct]=data.sealed.split(".").map(bytes);
  const [ak,jwt]=JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:"AES-GCM",iv,additionalData:aad},await key,ct)));
+ if(action==="quote"){
+  if(typeof symbol!=="string"||!/^[A-Z0-9& -]{1,32}$/.test(symbol))return reply({error:"Invalid symbol"},400);
+  const brokerHeaders={"Content-Type":"application/json",Accept:"application/json",Authorization:"Bearer "+jwt,"X-PrivateKey":ak,"X-UserType":"USER","X-SourceID":"WEB"};
+  const exchange=symbol==="SENSEX"?"BSE":"NSE";
+  const indexTokens:Record<string,string>={"NIFTY 50":"99926000",BANKNIFTY:"99926009",SENSEX:"99919000"};
+  let token=indexTokens[symbol];
+  if(!token){const tradingSymbol=({GMRINFRA:"GMRAIRPORT",BIRLASOFT:"BSOFT"} as Record<string,string>)[symbol]||symbol;
+   const search=await fetch("https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/searchScrip",{method:"POST",headers:brokerHeaders,body:JSON.stringify({exchange,searchscrip:tradingSymbol}),signal:AbortSignal.timeout(6000)});
+   const items=(await search.json()).data||[];token=items.find((x:{tradingsymbol:string})=>[tradingSymbol+"-EQ",tradingSymbol].includes(x.tradingsymbol))?.symboltoken;
+  }
+  if(!token)return reply({error:"No matching market-data token"},404);
+  const res=await fetch("https://apiconnect.angelone.in/rest/secure/angelbroking/market/v1/quote/",{method:"POST",headers:brokerHeaders,body:JSON.stringify({mode:"FULL",exchangeTokens:{[exchange]:[token]}}),signal:AbortSignal.timeout(6000)});
+  const q=(await res.json()).data?.fetched?.[0];if(!q||!(q.ltp>0))return reply({error:"Quote unavailable"},503);
+  return reply({price:q.ltp,asOf:q.exchFeedTime||q.exchTradeTime||null,source:"Angel One"});
+ }
  const res=await fetch("https://apiconnect.angelone.in/rest/secure/angelbroking/market/v1/quote/",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json",Authorization:"Bearer "+jwt,"X-PrivateKey":ak,"X-UserType":"USER","X-SourceID":"WEB"},body:JSON.stringify({mode:"LTP",exchangeTokens:{NSE:["2885"]}}),signal:AbortSignal.timeout(10000)});
  const quote=await res.json();return res.ok&&quote.status&&quote.data?.fetched?.length?reply({message:"Market-data quote verified"}):reply({error:"Quote unavailable. Check the API key and current session token."},400);
  }catch{return reply({error:"Connection request failed. Try again."},502)}
