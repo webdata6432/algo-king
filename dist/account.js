@@ -4,7 +4,7 @@ let session=JSON.parse(sessionStorage.getItem('ak-session')||'null');
 function sessionChanged(value){
  session=value;sessionStorage.setItem('ak-session',JSON.stringify(value));
  if(!value)paintProfile(null);
- $('account').textContent=value?'My account':'Log in / Sign up';
+ $('account').textContent=value?'My account':'Sign in';
 }
 sessionChanged(session);
 async function accountRequest(path,body,bearer){
@@ -13,7 +13,7 @@ async function accountRequest(path,body,bearer){
 }
 function accountPanel(){
  if(session){openMemberProfile();return}
- modal('Account','<form id="loginForm"><div class="fields">'+input('Email or mobile number','identity','','text','autocomplete="username" placeholder="Email or +91 mobile number"')+input('Password','password','','password','minlength="6"')+'</div><div class="row"><button class="primary" value="login">Sign in</button><button value="signup">Sign up</button></div><p role="status" id="authMsg"></p></form>');
+ modal('Sign in','<form id="loginForm"><div class="fields">'+input('Email or mobile number','identity','','text','autocomplete="username" placeholder="Email or +91 mobile number"')+input('Password','password','','password','minlength="6"')+'</div><div class="row"><button class="primary" value="login">Sign in</button><span>New user? <button value="signup">Sign up</button></span></div><p role="status" id="authMsg"></p></form>');
  $('loginForm').onsubmit=async e=>{e.preventDefault();const signup=e.submitter?.value==='signup',msg=$('authMsg');try{
  const id=$('identity').value.trim(),email=id.includes('@'),identity=email?{email:id}:{phone:mobileNumber(id)};
  msg.textContent='Please wait…';
@@ -28,7 +28,7 @@ function accountPanel(){
 const localAngel=angel;
 angel=function(){
  if(['localhost','127.0.0.1'].includes(location.hostname)&&!session)return localAngel();
- $('app').innerHTML=heading('Personal connections','Angel One SmartAPI','Your read-only market-data connection.')+'<section class="panel">'+(session?'<form id="broker"><h2>My connection</h2><div class="fields">'+input('SmartAPI key','brokerKey','','password','autocomplete="off"')+input('Current access token','brokerToken','','password','autocomplete="off"')+'</div><div class="row"><button class="primary">Save connection</button><button type="button" id="checkBroker">Test connection</button><button type="button" id="removeBroker">Disconnect</button></div></form><p role="status" id="brokerStatus"></p>':'<button class="primary" onclick="accountPanel()">Log in / Sign up</button>')+'</section>';
+ $('app').innerHTML=heading('Personal connections','Angel One SmartAPI','Your read-only market-data connection.')+'<section class="panel">'+(session?'<form id="broker"><h2>My connection</h2><div class="fields">'+input('SmartAPI key','brokerKey','','password','autocomplete="off"')+input('Current access token','brokerToken','','password','autocomplete="off"')+'</div><div class="row"><button class="primary">Save connection</button><button type="button" id="checkBroker">Test connection</button><button type="button" id="removeBroker">Disconnect</button></div></form><p role="status" id="brokerStatus"></p>':'<button class="primary" onclick="accountPanel()">Sign in</button>')+'</section>';
  if(!session)return;
  async function send(action,extra={}){let msg=$('brokerStatus'),owner=session;try{if(owner.expires_at*1000<Date.now()+30000){let refreshed=await accountRequest('/auth/v1/token?grant_type=refresh_token',{refresh_token:owner.refresh_token});if(session!==owner)return;sessionChanged(refreshed)}let j=await accountRequest('/functions/v1/angel-account',{action,...extra},session.access_token);msg.textContent=j.message}catch(e){msg.textContent=e.message}}
  $('broker').onsubmit=e=>{e.preventDefault();let args={apiKey:$('brokerKey').value,accessToken:$('brokerToken').value};$('broker').reset();send('save',args)};

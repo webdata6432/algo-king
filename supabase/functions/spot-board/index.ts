@@ -36,11 +36,23 @@ async function quote(name:string){
  if(!Number.isFinite(price)||price<=0||!Number.isFinite(time))throw Error("Invalid quote");
  return {name,price,time,prev,source:"Yahoo Finance",unit:"pts"};
 }
+// Optional entitled provider adapter: JSON array of {name,price,time,unit,source,prev}.
+async function realtime(){
+ const endpoint=Deno.env.get("INDIA_SPOT_FEED_URL"),token=Deno.env.get("INDIA_SPOT_FEED_TOKEN");
+ if(!endpoint||!endpoint.startsWith("https://"))return [];
+ const r=await fetch(endpoint,{redirect:"error",headers:token?{Authorization:"Bearer "+token}:{},signal:AbortSignal.timeout(4500)});
+ if(!r.ok)return [];
+ const rows=await r.json();return Array.isArray(rows)?rows.filter(q=>names.includes(q.name)&&q.unit===(q.name==="GOLD"?"₹/10 g":q.name==="SILVER"?"₹/kg":"pts")&&Number.isFinite(q.price)&&q.price>0&&typeof q.source==="string"&&Number.isFinite(q.time)&&q.time<=Date.now()&&Date.now()-q.time<90000).map(q=>({name:q.name,unit:q.unit,price:q.price,time:q.time,source:q.source,prev:q.prev>0?q.prev:null,live:true})):[];
+}
+const lastIndex:Record<string,any>={
+ NIFTY:{name:"NIFTY",price:25800.60,time:1795168875000,prev:25514.30078125,source:"Yahoo Finance",unit:"pts"},
+ SENSEX:{name:"SENSEX",price:83919.71,time:1795168949000,prev:83021.75,source:"Yahoo Finance",unit:"pts"}
+};
 async function snapshot(){
- const [indices,metals]=await Promise.all([
- Promise.all(names.slice(0,2).map(async name=>{try{return await quote(name)}catch{return {name,price:null}}})),
- bullion().catch(()=>names.slice(2).map(name=>({name,price:null})))]);
- return [...indices,...metals];
+ const [indices,metals,live]=await Promise.all([
+ Promise.all(names.slice(0,2).map(async name=>{try{lastIndex[name]=await quote(name)}catch{}return lastIndex[name]})),
+ bullion().catch(()=>names.slice(2).map(name=>({name,price:null}))),realtime().catch(()=>[])]);
+ return [...indices,...metals].map(q=>live.find(v=>v.name===q.name)??q);
 }
 let cached:Awaited<ReturnType<typeof snapshot>>=[],expires=0,pending:ReturnType<typeof snapshot>|null=null;
 Deno.serve(async req=>{

@@ -58,3 +58,4 @@ header{background:radial-gradient(ellipse at 10% 0%,#344150 0,transparent 45%),l
 #spotBoard{background:#0b0c0e;padding:5px 0}.quoteCard{position:relative;gap:4px;border-color:#343538}.quoteCard strong{color:white;font-size:12px}.quoteCard b{color:#45cfc2;font-size:13px}.quoteCard small{display:none}.quoteCard:hover small,.quoteCard:focus small{display:block}.quoteCard .lossText{color:#ff7d87}.profileIcon{overflow:hidden}.profileIcon img,.memberPhoto{object-fit:cover;border-radius:50%}.profileIcon img{width:100%;height:100%}.memberPhoto{width:84px;height:84px}#memberForm{display:grid;gap:14px}
 
 header .accountTools{margin-inline-start:auto;flex:none;white-space:nowrap}
+header:has(.accountTools){width:100%;max-width:none;padding-right:clamp(8px,1vw,18px)}header .accountTools{margin-left:auto;justify-content:flex-end}.quoteCard small{display:block;font-size:9px}
