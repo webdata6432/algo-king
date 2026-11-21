@@ -27,10 +27,11 @@ jobs:
             git -c user.name="Market Sync" -c user.email="market-sync@users.noreply.github.com" commit -m "Refresh NSE daily history"
             git push
           fi
+      - run: node private-site/build.mjs
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v5
         with:
-          path: dist
+          path: published
   deploy:
     needs: build
     runs-on: ubuntu-latest

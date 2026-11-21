@@ -13,6 +13,7 @@ Deno.serve(async req=>{
  if(!token)return reply({error:"Sign in first"},401);
  const {data:{user},error}=await admin.auth.getUser(token);
  if(error||!user)return reply({error:"Sign in again"},401);
+ if(!user.email_confirmed_at||user.email?.toLowerCase()!=="webdata6432@gmail.com")return reply({error:"Owner access only"},403);
  const {action,apiKey,accessToken,symbol}=await req.json(), table=admin.from("angel_connections");
  const aad=enc.encode(user.id);
  if(action==="save"){
