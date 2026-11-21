@@ -44,7 +44,8 @@ async function trackMarketQuote(symbol,node){
    let q;if(session)q=await accountRequest('/functions/v1/angel-account',{action:'quote',symbol},session.access_token).catch(()=>null);
    if(!q?.price){const r=await fetch(authOrigin+'/functions/v1/market-minute?mode=quote&symbol='+encodeURIComponent(symbol));if(!r.ok)throw Error();q=await r.json()}
    const stamp=q.asOf||(q.time?new Date(q.time).toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})+' IST':'Time unavailable');
-   node.textContent='Latest quote · '+fmt(q.price)+' · '+q.source+' · '+stamp;
+   const match=String(q.asOf||'').match(/^(\d{2})-([A-Za-z]{3})-(\d{4}) (\d{2}:\d{2}:\d{2})$/);const timestamp=q.time||(match?Date.parse(match[1]+' '+match[2]+' '+match[3]+' '+match[4]+' GMT+0530'):NaN);const age=Date.now()-timestamp;const quality=Number.isFinite(age)&&age>=0?(age<=1800000?'Within 30 min':'Last known · over 30 min'):'Timestamp unverified';
+   node.textContent=quality+' · '+fmt(q.price)+' · '+q.source+' · '+stamp;
   }catch{node.textContent='Latest quote unavailable · historical candles below'}
   if(node.isConnected&&$('dlg').open)setTimeout(update,30000);
  }

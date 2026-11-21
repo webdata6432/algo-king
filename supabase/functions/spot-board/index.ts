@@ -21,6 +21,14 @@ async function bullion(){
   return {name,price:latest[name],date:latest.date,session:latest.session,unit:name==="GOLD"?"₹/10 g":"₹/kg",prev:valid.find(r=>r.date<latest.date&&r.session==="PM")?.[name]??null,source:"IBJA 999"};
  });
 }
+async function intradayQuote(key:string){
+ const r=await fetch("https://api.upstox.com/v3/historical-candle/intraday/"+encodeURIComponent(key)+"/minutes/1",{signal:AbortSignal.timeout(3500)});
+ if(!r.ok)return null;
+ const rows=(await r.json()).data?.candles;
+ if(!Array.isArray(rows))return null;
+ const bar=rows.find(v=>Number.isFinite(v[4])&&v[4]>0&&Date.parse(v[0])<=Date.now());
+ return bar?{price:bar[4],time:Date.parse(bar[0]),source:"Upstox · minute candle"}:null;
+}
 async function quote(name:string){
  let price,time,prev=null;
  {
@@ -42,7 +50,7 @@ async function realtime(){
  if(!endpoint||!endpoint.startsWith("https://"))return [];
  const r=await fetch(endpoint,{redirect:"error",headers:token?{Authorization:"Bearer "+token}:{},signal:AbortSignal.timeout(4500)});
  if(!r.ok)return [];
- const rows=await r.json();return Array.isArray(rows)?rows.filter(q=>names.includes(q.name)&&q.unit===(q.name==="GOLD"?"₹/10 g":q.name==="SILVER"?"₹/kg":"pts")&&Number.isFinite(q.price)&&q.price>0&&typeof q.source==="string"&&Number.isFinite(q.time)&&q.time<=Date.now()&&Date.now()-q.time<90000).map(q=>({name:q.name,unit:q.unit,price:q.price,time:q.time,source:q.source,prev:q.prev>0?q.prev:null,live:true})):[];
+ const rows=await r.json();return Array.isArray(rows)?rows.filter(q=>names.includes(q.name)&&q.unit===(q.name==="GOLD"?"₹/10 g":q.name==="SILVER"?"₹/kg":"pts")&&Number.isFinite(q.price)&&q.price>0&&typeof q.source==="string"&&Number.isFinite(q.time)&&q.time<=Date.now()&&Date.now()-q.time<=180000).map(q=>({name:q.name,unit:q.unit,price:q.price,time:q.time,source:q.source,prev:q.prev>0?q.prev:null,live:true})):[];
 }
 const lastIndex:Record<string,any>={
  NIFTY:{name:"NIFTY",price:25800.60,time:1795168875000,prev:25514.30078125,source:"Yahoo Finance",unit:"pts"},
@@ -50,7 +58,10 @@ const lastIndex:Record<string,any>={
 };
 async function snapshot(){
  const [indices,metals,live]=await Promise.all([
- Promise.all(names.slice(0,2).map(async name=>{try{lastIndex[name]=await quote(name)}catch{}return lastIndex[name]})),
+ Promise.all(names.slice(0,2).map(async name=>{const [minute,snapshot]=await Promise.all([intradayQuote(name==="NIFTY"?"NSE_INDEX|Nifty 50":"BSE_INDEX|SENSEX").catch(()=>null),quote(name).catch(()=>null)]);
+ if(snapshot&&snapshot.time>=lastIndex[name].time)lastIndex[name]=snapshot;
+ if(minute&&minute.time>lastIndex[name].time){const old=lastIndex[name],sameDay=(t:number)=>new Date(t+19800000).toISOString().slice(0,10);lastIndex[name]={...old,...minute,prev:sameDay(minute.time)===sameDay(old.time)?old.prev:null}}
+ return lastIndex[name]})),
  bullion().catch(()=>names.slice(2).map(name=>({name,price:null}))),realtime().catch(()=>[])]);
  return [...indices,...metals].map(q=>live.find(v=>v.name===q.name)??q);
 }

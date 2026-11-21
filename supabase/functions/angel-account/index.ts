@@ -41,7 +41,7 @@ Deno.serve(async req=>{
   if(!token)return reply({error:"No matching market-data token"},404);
   const res=await fetch("https://apiconnect.angelone.in/rest/secure/angelbroking/market/v1/quote/",{method:"POST",headers:brokerHeaders,body:JSON.stringify({mode:"FULL",exchangeTokens:{[exchange]:[token]}}),signal:AbortSignal.timeout(6000)});
   const q=(await res.json()).data?.fetched?.[0];if(!q||!(q.ltp>0))return reply({error:"Quote unavailable"},503);
-  return reply({price:q.ltp,asOf:q.exchFeedTime||q.exchTradeTime||null,source:"Angel One"});
+  return reply({price:q.ltp,prev:Number(q.close)>0?Number(q.close):null,asOf:q.exchFeedTime||q.exchTradeTime||null,source:"Angel One"});
  }
  const res=await fetch("https://apiconnect.angelone.in/rest/secure/angelbroking/market/v1/quote/",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json",Authorization:"Bearer "+jwt,"X-PrivateKey":ak,"X-UserType":"USER","X-SourceID":"WEB"},body:JSON.stringify({mode:"LTP",exchangeTokens:{NSE:["2885"]}}),signal:AbortSignal.timeout(10000)});
  const quote=await res.json();return res.ok&&quote.status&&quote.data?.fetched?.length?reply({message:"Market-data quote verified"}):reply({error:"Quote unavailable. Check the API key and current session token."},400);
