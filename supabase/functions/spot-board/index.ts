@@ -11,7 +11,9 @@ async function quote(name:string){
   price=q.price;time=Date.parse(q.updatedAt);
  }else{
   const symbol=name==="NIFTY"?"%5ENSEI":"%5EBSESN";
-  const q=(await json("https://query1.finance.yahoo.com/v8/finance/chart/"+symbol+"?interval=1d&range=5d")).chart.result[0];
+  const path="/v8/finance/chart/"+symbol+"?interval=1d&range=5d";
+  const payload=await json("https://query1.finance.yahoo.com"+path).catch(()=>json("https://query2.finance.yahoo.com"+path));
+  const q=payload.chart.result[0];
   price=q.meta.regularMarketPrice;time=q.meta.regularMarketTime*1000;
   const day=(t:number)=>new Date(t+19800000).toISOString().slice(0,10);
   const closes=q.indicators.quote[0].close;
