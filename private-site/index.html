@@ -1,17 +1,20 @@
 <!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Algo King · Private workspace</title><style>*{box-sizing:border-box}body{margin:0;min-height:100dvh;display:grid;place-items:center;background:#101723;color:#f0f1f3;font:16px system-ui}form{width:min(92vw,390px);padding:32px;background:#182332;border:1px solid #465366;border-radius:18px}small{color:#edc781}h1{margin:8px 0 22px}input,button{width:100%;padding:12px;margin:8px 0;border-radius:8px;font:inherit}input{background:#101822;color:white;border:1px solid #596477}button{background:#f0ca83;font-weight:650;border:0;cursor:pointer}</style><form><small>ALGO KING</small><h1>Private workspace</h1><label>Site password<input id="pw" type="password" autocomplete="current-password" required></label><button>Unlock</button><p role="status" id="msg"></p></form><script>
+(()=>{
 const originURL='https://wpqcyyevhxqbhudsxydd.supabase.co',pk='sb_publishable_B-pFfyhNKmR3npMnJE2D1A_Z94lv22f';
 const decode=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
 async function auth(path,body){const r=await fetch(originURL+'/auth/v1/token?grant_type='+path,{method:'POST',headers:{apikey:pk,'Content-Type':'application/json'},body:JSON.stringify(body)});if(!r.ok)throw Error('Unable to unlock. Check your password.');return r.json()}
 async function unlock(s){
+ msg.textContent='Opening private workspace…';
  if(s.expires_at*1000<Date.now()+30000)s=await auth('refresh_token',{refresh_token:s.refresh_token});
- const [wrapped,asset]=await Promise.all(['key.txt','app.bin'].map(x=>fetch(x,{cache:'no-store'})));
+ const [wrapped,asset]=await Promise.all(['key.txt','app.gz.bin'].map(x=>fetch(x,{cache:'no-store'})));
  if(!wrapped.ok||!asset.ok)throw Error('Workspace unavailable.');
  const res=await fetch(originURL+'/functions/v1/site-unlock',{method:'POST',headers:{Authorization:'Bearer '+s.access_token,apikey:pk,'Content-Type':'text/plain'},body:await wrapped.text()});
  if(!res.ok)throw Error('Owner access required.');
  const key=await crypto.subtle.importKey('raw',decode(await res.text()),'AES-GCM',false,['decrypt']);
  const data=new Uint8Array(await asset.arrayBuffer()),plain=await crypto.subtle.decrypt({name:'AES-GCM',iv:data.slice(0,12)},key,data.slice(12));
- sessionStorage.setItem('ak-session',JSON.stringify(s));document.open();document.write(new TextDecoder().decode(plain));document.close();
+ sessionStorage.setItem('ak-session',JSON.stringify(s));const html=await new Response(new Blob([plain]).stream().pipeThrough(new DecompressionStream('gzip'))).text();document.open();document.write(html);document.close();
 }
 const form=document.querySelector('form');form.onsubmit=async e=>{e.preventDefault();form.querySelector('button').disabled=true;try{msg.textContent='Unlocking…';await unlock(await auth('password',{email:'webdata6432@gmail.com',password:pw.value}))}catch(err){msg.textContent=err.message;form.querySelector('button').disabled=false}};
-const saved=sessionStorage.getItem('ak-session');if(saved)unlock(JSON.parse(saved)).catch(()=>sessionStorage.removeItem('ak-session'));
+const saved=sessionStorage.getItem('ak-session');if(saved){Promise.resolve().then(()=>unlock(JSON.parse(saved))).catch(()=>{sessionStorage.removeItem('ak-session');msg.textContent='Enter your password to reopen the workspace.'})}
+})();
 </script></html>
