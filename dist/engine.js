@@ -41,6 +41,12 @@ function simulate(rows,p){
   let trades=[],skipped=[],cum=0,peak=0,dd=0;
   let busyUntil='';for(let [d,day] of groups){if(d<=busyUntil)continue;
     if(p.expiry && (d>p.expiry || (p.dte!=="" && p.dte!=null && (Date.parse(p.expiry)-Date.parse(d))/864e5!==+p.dte)))continue;
+    if(p.expiry&&p.term&&p.term!=='Exact contract'){
+      const day=new Date(d+'T00:00Z'),offset=(day.getUTCDay()+6)%7,delta=(Date.parse(p.expiry)-day.getTime())/86400000;
+      if(p.term==='This week'&&(delta<0||delta>6-offset))continue;
+      if(p.term==='Next week'&&(delta<7-offset||delta>13-offset))continue;
+      if(p.term==='Monthly'&&(p.expiry!==p.latestExpiry||p.expiry.slice(0,7)!==d.slice(0,7)))continue;
+    }
     let overnight=p.holding==='Positional',exitDay=d;
     let a=day.filter(r=>r.m>=p.entry&&r.m<=(overnight?929:p.exit));
     if(overnight){let dates=[...groups.keys()],next=dates[dates.indexOf(d)+1];if(!next||(p.expiry&&next>p.expiry)||p.exit>929||p.entry<555||a.length!==930-p.entry){skipped.push(d);continue}let tail=groups.get(next).filter(r=>r.m>=555&&r.m<=p.exit);if(tail.length!==p.exit-554){skipped.push(d);continue}exitDay=next;a=a.concat(tail)}
@@ -48,7 +54,7 @@ function simulate(rows,p){
     if((!overnight&&a.length!==p.exit-p.entry+1)||a[0]?.m!==p.entry||a.at(-1)?.m!==p.exit){skipped.push(d);continue}
     let sign=p.side==='Buy'?1:-1,slip=p.slip/10000,ep=a[0].o*(1+sign*slip),best=ep,reason='Timed exit',out=a.at(-1).o,m=p.exit;
     let fillDay=exitDay;for(let r of a){
-      let fixed=p.stop?ep-sign*distance(p.stop,p.stopUnit,ep,p.qty):null,trail=p.trail?best*(1-sign*p.trail/100):null;
+      let fixed=p.stop?ep-sign*distance(p.stop,p.stopUnit,ep,p.qty):null,trail=p.trailX&&fixed!==null?fixed+sign*Math.floor(Math.max(0,sign*(best-ep))/p.trailX)*p.trailY:p.trail?best*(1-sign*p.trail/100):null;
       let stops=[fixed,trail].filter(x=>x!==null),stop=stops.length?(sign>0?Math.max(...stops):Math.min(...stops)):null;
       let target=p.target?ep+sign*distance(p.target,p.targetUnit,ep,p.qty):null,stopName=trail!==null&&stop===trail&&best!==ep?'Trailing stop':'Stop loss';
       let hit=(price,threshold,dir)=>threshold!==null&&dir*(price-threshold)>=0;
