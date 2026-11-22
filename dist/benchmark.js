@@ -14,14 +14,55 @@ async function refreshBenchmark(){
 let benchmarkSource='Bundled · historical';
 window.addEventListener('load',refreshBenchmark);
 
+let dailyStart='',earlierKeyMap;
 let exchangeDaily=Object.create(null),exchangeStatus='Loading NSE history…';
 async function loadExchangeHistory(){
  try{const response=await fetch('market/daily.json');if(!response.ok)throw Error();
  const data=await response.json();for(const [symbol,rows] of Object.entries(data))exchangeDaily[symbol]=rows.map(([d,o,c,prev])=>bar(d,o,c,prev));
+ dailyStart=Object.values(exchangeDaily).filter(r=>r.length).map(r=>r[0].d).sort()[0];
  const dates=Object.values(exchangeDaily).flatMap(rows=>rows.length?[rows.at(-1).d]:[]).sort();
  if(filters.to===end&&dates.length&&dates.at(-1)>end)filters.to=dates.at(-1);
- exchangeStatus='NSE end-of-day reports · '+Object.keys(data).length+' instruments · latest session '+dates.at(-1);
+ exchangeStatus='Daily price history · '+Object.keys(data).length+' instruments · '+dailyStart+' — '+dates.at(-1);
  }catch{exchangeStatus='NSE history unavailable. Retry or import a daily CSV.'}
  if(document.getElementById('rank'))market();
 }
 window.addEventListener('load',loadExchangeHistory);
+
+const earlierRequests=new Map();
+async function loadEarlierDays(symbols,from,to){
+ if(!earlierKeyMap){
+  earlierKeyMap=fetch('market/shares.json').then(r=>r.json()).then(rows=>{
+   const keys=Object.fromEntries(rows.map(([s,,key])=>[s,key]));
+   return Object.assign(keys,{GMRINFRA:keys.GMRAIRPORT,BIRLASOFT:keys.BSOFT,SENSEX:'BSE_INDEX|SENSEX','NIFTY 50':'NSE_INDEX|Nifty 50',BANKNIFTY:'NSE_INDEX|Nifty Bank','NIFTY MIDCAP 100':'NSE_INDEX|NIFTY MIDCAP 100'});
+  }).catch(e=>{earlierKeyMap=null;throw e});
+ }
+ const keys=await earlierKeyMap;
+ const day=86400000,until=Math.min(Date.parse(to),Date.parse(dailyStart));
+ const queue=[...symbols];
+ async function worker(){
+  while(queue.length){
+   const symbol=queue.shift(),key=keys[symbol];
+   if(!key)continue;
+   for(let date=Date.parse(from);date<=until;date+=365*day){
+    const start=new Date(date-10*day).toISOString().slice(0,10);
+    const end=new Date(Math.min(date+364*day,until)).toISOString().slice(0,10);
+    const id=[key,start,end].join('|');
+    if(!earlierRequests.has(id)){
+     const request=fetch('https://api.upstox.com/v3/historical-candle/'+encodeURIComponent(key)+'/days/1/'+end+'/'+start,{signal:AbortSignal.timeout(25000)}).then(async r=>{
+      if(!r.ok)throw Error();const items=(await r.json()).data?.candles;
+      if(!Array.isArray(items))throw Error();
+      const rows=new Map();let prev=null;
+      for(const [t,o,,,c] of items.sort((a,b)=>a[0].localeCompare(b[0]))){
+       if(o>0&&c>0){rows.set(t.slice(0,10),bar(t.slice(0,10),o,c,prev));prev=c}
+      }
+      for(const row of exchangeDaily[symbol]||[])rows.set(row.d,row);
+      exchangeDaily[symbol]=[...rows.values()].sort((a,b)=>a.d.localeCompare(b.d));
+     }).catch(err=>{earlierRequests.delete(id);throw err});
+     earlierRequests.set(id,request);
+    }
+    await earlierRequests.get(id);
+   }
+  }
+ }
+ await Promise.all(Array.from({length:Math.min(5,queue.length)},worker));
+}

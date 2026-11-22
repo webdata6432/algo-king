@@ -56,6 +56,22 @@ with ThreadPoolExecutor(max_workers=6) as pool:
         for s,row in records:
             bars.setdefault(s,{})[row[0]]=row
             count+=1
+# SENSEX trades on BSE and is absent from the NSE daily index report.
+try:
+    today = date.today()
+    first = today - timedelta(days=max(args.days + 10, 20))
+    url = f'https://api.upstox.com/v3/historical-candle/BSE_INDEX%7CSENSEX/days/1/{today}/{first}'
+    raw = subprocess.check_output(['curl', '-fsSL', '--max-time', '30', url])
+    prev = None
+    for stamp, op, _, _, close, *_ in sorted(json.loads(raw)['data']['candles']):
+        if op <= 0 or close <= 0:
+            continue
+        if prev is not None:
+            bars.setdefault('SENSEX', {})[stamp[:10]] = [stamp[:10], op, close, prev]
+            count += 1
+        prev = close
+except (subprocess.SubprocessError, KeyError, ValueError) as exc:
+    print('SENSEX daily update unavailable:', exc, file=sys.stderr)
 if not count:sys.exit('No exchange observations received')
 dest.write_text(json.dumps({s:sorted(rows.values())[-520:] for s,rows in sorted(bars.items())},separators=(',',':')))
 print(len(bars),'instruments;',count,'observations received')

@@ -2,52 +2,58 @@ const levels=[1,2,3,5], presetNames=['7D','15D','30D','1Y','Custom'];
 let leaderboard=[],filters={period:'7D',from:'2026-10-22',to:end,cap:'All stocks',cut:'1%',limit:10,query:''};
 function presetStart(to,period){let d=new Date(to+'T00:00Z');if(period==='1Y')d.setUTCFullYear(d.getUTCFullYear()-1);else d.setUTCDate(d.getUTCDate()-(parseInt(period)-1));return d.toISOString().slice(0,10)}
 function score(rows,cut){let hits=levels.map(n=>rows.filter(r=>Math.abs(r.i)>=n).length);return {hits,score:cut==='All'?hits[0]:hits[levels.indexOf(parseInt(cut))]}}
-function aggregate(rs){let base=rs[0].a==null?rs[0].c:rs[0].c/(1+rs[0].a/100),last=rs.at(-1);return {points:last.c-base,actual:rs.length===1&&rs[0].a==null?null:100*(last.c/base-1),intraday:100*(rs.reduce((x,r)=>x*(1+r.i/100),1)-1)}}
+function aggregate(rows){
+ const first=rows[0],last=rows.at(-1);
+ const base=first.a==null?first.o:first.c/(1+first.a/100);
+ let peak=base,drawdown=0;
+ for(const row of rows){
+  peak=Math.max(peak,row.c);
+  drawdown=Math.min(drawdown,100*(row.c/peak-1));
+ }
+ return {base,points:last.c-base,actual:100*(last.c/base-1),peakReturn:100*(peak/base-1),drawdown};
+}
 function market(){
  $('app').innerHTML=heading('Market returns','Intraday momentum','Rank instruments by the number of sessions with a qualifying open-to-close move.',importButton)+'<section class="panel"><h2>Dates</h2><div class="fields">'+select('Date range','period',presetNames)+input('From','mf',filters.from,'date')+input('Through','mt',filters.to,'date')+select('Absolute move ≥','cut',['1%','2%','3%','5%','All'])+'</div></section><section class="panel"><h2>Stock filters</h2><div class="fields">'+input('Search','query',filters.query,'search','placeholder="Name or symbol"')+input('Show top','topN',filters.limit,'number','min="1" max="999"')+'</div><div class="fields">'+select('Stock group','universeCap',['All stocks',...caps,'Indices'])+'</div><p class="hint">All shows every threshold, ranked by ≥1% sessions. Ties use ≥5%, ≥3%, ≥2% hits, then symbol. Cap groups are sample watchlists. '+esc(exchangeStatus)+'</p><div id="rank"></div></section>';
  $('period').value=filters.period;$('cut').value=filters.cut;$('universeCap').value=filters.cap;
- function render(){Object.assign(filters,{period:$('period').value,to:$('mt').value,cap:$('universeCap').value,cut:$('cut').value,limit:Math.max(1,Math.floor(+$('topN').value||1)),query:$('query').value});
+ let revision=0;const host=$('rank');
+ async function render(){const ticket=++revision;Object.assign(filters,{period:$('period').value,to:$('mt').value,cap:$('universeCap').value,cut:$('cut').value,limit:Math.max(1,Math.floor(+$('topN').value||1)),query:$('query').value});
  if(!filters.to||!$('mf').value)return;if(filters.period!=='Custom')$('mf').value=presetStart(filters.to,filters.period);
  filters.from=$('mf').value;$('mf').disabled=$('mt').disabled=filters.period!=='Custom';
  const indexList=['NIFTY 50','SENSEX','BANKNIFTY','NIFTY MIDCAP 100'];
  const stocks=[...groups.flat(),...imports.filter(x=>x.kind==='Equity').map(x=>x.s)];
  let syms=filters.query.trim()?[...stocks,...indexList]:filters.cap==='Indices'?indexList:caps.includes(filters.cap)?groups[caps.indexOf(filters.cap)]:stocks;
- leaderboard=[...new Set(syms)].filter(s=>s.includes(filters.query.trim().toUpperCase())).flatMap(s=>{let file=imports.filter(x=>x.s===s).at(-1),rows=(file?dailyBars(file.rows):(s==='SENSEX'?db.SENSEX:exchangeDaily[s]||[])).filter(r=>r.d>=filters.from&&r.d<=filters.to);return rows.length?[{s,rows,source:file?'CSV · '+file.src:s==='SENSEX'?benchmarkSource:'NSE · daily report',...score(rows,filters.cut),...aggregate(rows)}]:[]}).sort((a,b)=>b.score-a.score||b.hits[3]-a.hits[3]||b.hits[2]-a.hits[2]||b.hits[1]-a.hits[1]||a.s.localeCompare(b.s)).filter(x=>filters.query.trim()||filters.cap==='Indices'||x.score>0).slice(0,filters.query.trim()||filters.cap==='Indices'?Infinity:filters.limit);
+ syms=[...new Set(syms)].filter(s=>s.includes(filters.query.trim().toUpperCase()));
+ if(filters.from>filters.to){host.textContent='Choose an end date on or after the start date.';return}
+ if(dailyStart&&filters.from<dailyStart){
+  host.textContent='Loading earlier daily sessions…';
+  try{await loadEarlierDays(syms.filter(s=>!imports.some(f=>f.s===s)),filters.from,filters.to)}
+  catch{if(ticket===revision&&host.isConnected)host.textContent='Earlier history could not be loaded. Retry or narrow the date range.';return}
+  if(ticket!==revision||!host.isConnected)return;
+ }
+ leaderboard=[...new Set(syms)].filter(s=>s.includes(filters.query.trim().toUpperCase())).flatMap(s=>{let file=imports.filter(x=>x.s===s).at(-1),rows=(file?dailyBars(file.rows):(exchangeDaily[s]||(s==='SENSEX'?db.SENSEX:[]))).filter(r=>r.d>=filters.from&&r.d<=filters.to);return rows.length?[{s,rows,source:file?'CSV · '+file.src:'Exchange daily history',...score(rows,filters.cut),...aggregate(rows)}]:[]}).sort((a,b)=>b.score-a.score||b.hits[3]-a.hits[3]||b.hits[2]-a.hits[2]||b.hits[1]-a.hits[1]||a.s.localeCompare(b.s)).filter(x=>filters.query.trim()||filters.cap==='Indices'||x.score>0).slice(0,filters.query.trim()||filters.cap==='Indices'?Infinity:filters.limit);
  renderRankings()}
  $('universeCap').addEventListener('change',()=>{$('query').value=''});
  ['period','mf','mt','query','cut','topN','universeCap'].forEach(id=>$(id).addEventListener(['query','topN'].includes(id)?'input':'change',render));render()}
-function inspectRank(i){let x=leaderboard[i],rs=x.rows,base=rs[0].c/(1+(rs[0].a||0)/100),rows=rs.map(r=>({...r,cumulative:100*(r.c/base-1),tip:r.d+'\nOpen '+fmt(r.o)+' · Close '+fmt(r.c)+'\nIntraday '+signed(r.i)+'% · Actual '+(r.a==null?'—':signed(r.a)+'%')})),headers=['Session','Open','Close','Points','Intraday %','Actual %','Cumulative actual %',...levels.map(n=>'≥'+n+'%')];modal(x.s+' · Session detail','<p class="hint" id="latestMarketQuote">Checking latest market quote…</p>'+note(esc(x.source)+' · '+rs[0].d+' — '+rs.at(-1).d+' · '+rs.length+' sessions')+metrics([['Total incl. gaps',pct(x.actual)],['Change in points',signed(x.points)],['Last session · '+rs.at(-1).d,pct(rs.at(-1).i)]])+'<h3>Daily open-to-close move</h3>'+plot(rows.map(r=>({...r,tip:r.d+' · '+signed(r.i)+'%'})),'i','#42d995',true)+'<h3>Cumulative actual return</h3>'+plot(rows.map(r=>({...r,tip:r.d+' · '+signed(r.cumulative)+'%'})),'cumulative','#4fe3ac')+'<div class="row"><h3>Historical candles</h3><button id="historyCSV">Export CSV</button></div>'+table(headers,rows.map(r=>[r.d,fmt(r.o),fmt(r.c),signed(r.c-r.o),pct(r.i),pct(r.a),pct(r.cumulative),...levels.map(n=>Math.abs(r.i)>=n?'✓':'—')])));trackMarketQuote(x.s,$('latestMarketQuote'));$('historyCSV').onclick=()=>csv(x.s+'-history',[headers,...rows.map(r=>[r.d,r.o,r.c,r.c-r.o,r.i,r.a,r.cumulative,...levels.map(n=>Math.abs(r.i)>=n)])])}
+function inspectRank(i){let x=leaderboard[i],rs=x.rows,base=x.base,rows=rs.map(r=>({...r,cumulative:100*(r.c/base-1),tip:r.d+'\nOpen '+fmt(r.o)+' · Close '+fmt(r.c)+'\nIntraday '+signed(r.i)+'% · Actual '+(r.a==null?'—':signed(r.a)+'%')})),headers=['Session','Open','Close','Points','Intraday %','Actual %','Cumulative actual %',...levels.map(n=>'≥'+n+'%')];modal(x.s+' · Session detail','<p class="hint" id="latestMarketQuote">Checking latest market quote…</p>'+note(esc(x.source)+' · '+rs[0].d+' — '+rs.at(-1).d+' · '+rs.length+' sessions')+metrics([['Period incl. gaps',pct(x.actual)],['Peak return',pct(x.peakReturn)],['Max drawdown',pct(x.drawdown)],['Change in points',signed(x.points)],['Last session · '+rs.at(-1).d,pct(rs.at(-1).i)]])+'<h3>Daily open-to-close move</h3>'+plot(rows.map(r=>({...r,tip:r.d+' · '+signed(r.i)+'%'})),'i','#42d995',true)+'<h3>Cumulative actual return</h3>'+plot(rows.map(r=>({...r,tip:r.d+' · '+signed(r.cumulative)+'%'})),'cumulative','#4fe3ac')+'<div class="row"><h3>Historical candles</h3><button id="historyCSV">Export CSV</button></div>'+table(headers,rows.map(r=>[r.d,fmt(r.o),fmt(r.c),signed(r.c-r.o),pct(r.i),pct(r.a),pct(r.cumulative),...levels.map(n=>Math.abs(r.i)>=n?'✓':'—')])));trackMarketQuote(x.s,$('latestMarketQuote'));$('historyCSV').onclick=()=>csv(x.s+'-history',[headers,...rows.map(r=>[r.d,r.o,r.c,r.c-r.o,r.i,r.a,r.cumulative,...levels.map(n=>Math.abs(r.i)>=n)])])}
 let marketTab='Rankings',reportSymbol='',direction='Both';
 function stockGroup(s){return caps[groups.findIndex(g=>g.includes(s))]||(indices.includes(s)?'Index':'Imported')}
-function showReturnQuotes(host,symbols){
- const area=document.createElement('section'),body=document.createElement('div'),title=document.createElement('h3');
- title.textContent='Latest market returns';area.append(title,body);host.prepend(area);
- body.textContent='Checking FYERS quotes…';
- setTimeout(()=>pollWhile(body,30000,()=>stockQuotes(symbols),quotes=>{
-  const lookup=new Map(quotes.map(q=>[q.symbol,q]));
-  const change=(price,base)=>base>0?pct(100*(price-base)/base):'—';
-  body.innerHTML=table(['Stock','Latest ₹ / pts','From open','Incl. gap','FYERS quote time'],symbols.map(s=>{
-   const q=lookup.get(s);return q?[esc(s),fmt(q.price),change(q.price,q.open),change(q.price,q.prev),esc(quoteTime(q.time))]:[esc(s),'—','—','—','Quote unavailable'];
-  }));
- },err=>body.textContent=err.message),350);
-}
 function renderRankings(){
  const root=$('rank');root.innerHTML='<div class="viewtabs">'+['Rankings','Daily report'].map(n=>'<button class="'+(marketTab===n?'selected':'')+'">'+n+'</button>').join('')+'</div><div id="rankBody"></div>';
  root.querySelectorAll('.viewtabs button').forEach(b=>b.onclick=()=>{marketTab=b.textContent;renderRankings()});
  const body=$('rankBody');if(!leaderboard.length){body.innerHTML=empty('No matching sessions. Try another date or stock.');
- const typed=filters.query.trim().toUpperCase();if(/^[A-Z0-9&-]{1,32}$/.test(typed))showReturnQuotes(root,[typed]);return}
+ return}
  if(marketTab==='Daily report'){
-  let x=leaderboard.find(x=>x.s===reportSymbol)||leaderboard[0];reportSymbol=x.s;showReturnQuotes(root,[x.s]);
+  let x=leaderboard.find(x=>x.s===reportSymbol)||leaderboard[0];reportSymbol=x.s;
   let rs=x.rows.filter(r=>direction==='Both'||(direction==='Up'?r.i>=0:r.i<0)).slice().reverse();
   let cols=['Date','Stock','Open','Close','Change ₹ / pts','Open → close %','Incl. gap %',...levels.map(n=>'≥'+n+'%')];
   const row=r=>[r.d,x.s,r.o,r.c,r.c-r.o,r.i,r.a,...levels.map(n=>Math.abs(r.i)>=n?'Yes':'—')];
   body.innerHTML='<div class="actions reportFilters">'+select('Stock','reportStock',leaderboard.map(x=>x.s))+select('Direction','reportDirection',['Both','Up','Down'])+'<button id="downloadReport">Export CSV</button></div>'+note(esc(x.source)+' · '+rs.length+' sessions')+table(cols,rs.map(r=>[r.d,esc(x.s),fmt(r.o),fmt(r.c),'<span class="'+col(r.c-r.o)+'">'+signed(r.c-r.o)+'</span>',pct(r.i),pct(r.a),...row(r).slice(7)]));
   $('reportStock').value=x.s;$('reportDirection').value=direction;$('reportStock').onchange=e=>{reportSymbol=e.target.value;renderRankings()};$('reportDirection').onchange=e=>{direction=e.target.value;renderRankings()};$('downloadReport').onclick=()=>csv(x.s+'-daily',[cols,...rs.map(row)]);return
  }
- showReturnQuotes(root,leaderboard.map(x=>x.s));
- let cols=['Rank · Stock','Group','Hit days','Hit rate','Avg |move|','Max up','Max down','Latest date','Change ₹ / pts','Open → close %','Incl. gap %',...(filters.cut==='All'?levels.map(n=>'≥'+n+'% hits'):[]),'Period incl. gaps','Source'];
- let rows=leaderboard.map(x=>{let r=x.rows.at(-1),moves=x.rows.map(r=>r.i);return [x.s,stockGroup(x.s),x.score+'/'+moves.length,100*x.score/moves.length,mean(moves.map(Math.abs)),Math.max(0,...moves),Math.min(0,...moves),r.d,r.c-r.o,r.i,r.a,...(filters.cut==='All'?x.hits:[]),x.actual,x.source]});
- body.innerHTML='<div class="row"><p class="hint">Select a stock to inspect its sessions.</p><button id="rankCSV">Export rankings</button></div>'+table(cols,rows.map((r,i)=>['<button onclick="inspectRank('+i+')">'+(i+1)+'. '+esc(r[0])+'</button>','<span class="capBadge">'+esc(r[1])+'</span>',r[2],'<span class="hitTrack"><i style="width:'+r[3]+'%"></i></span>'+fmt(r[3],1)+'%',fmt(r[4])+'%',pct(r[5]),pct(r[6]),r[7],'<span class="'+col(r[8])+'">'+signed(r[8])+'</span>',pct(r[9]),pct(r[10]),...r.slice(11,-2),pct(r.at(-2)),esc(r.at(-1))]));
+
+ let cols=['Rank · Stock','Group','Hit days','Hit rate','Avg |move|','Max up','Max down','Latest date','Change ₹ / pts','Open → close %','Incl. gap %',...(filters.cut==='All'?levels.map(n=>'≥'+n+'% hits'):[]),'Period incl. gaps','Peak return','Max drawdown'];
+ let rows=leaderboard.map(x=>{let r=x.rows.at(-1),moves=x.rows.map(r=>r.i);return [x.s,stockGroup(x.s),x.score+'/'+moves.length,100*x.score/moves.length,mean(moves.map(Math.abs)),Math.max(0,...moves),Math.min(0,...moves),r.d,r.c-r.o,r.i,r.a,...(filters.cut==='All'?x.hits:[]),x.actual,x.peakReturn,x.drawdown]});
+ body.innerHTML='<div class="row"><p class="hint">Peak return uses the highest close above the starting baseline (previous close, or first open if unavailable). Max drawdown is the largest closing fall from a peak within these dates.</p><button id="rankCSV">Export rankings</button></div>'+table(cols,rows.map((r,i)=>['<button onclick="inspectRank('+i+')">'+(i+1)+'. '+esc(r[0])+'</button>','<span class="capBadge">'+esc(r[1])+'</span>',r[2],'<span class="hitTrack"><i style="width:'+r[3]+'%"></i></span>'+fmt(r[3],1)+'%',fmt(r[4])+'%',pct(r[5]),pct(r[6]),r[7],'<span class="'+col(r[8])+'">'+signed(r[8])+'</span>',pct(r[9]),pct(r[10]),...r.slice(11,-3),...r.slice(-3).map(pct)]));
  $('rankCSV').onclick=()=>csv('momentum-rankings',[cols,...rows])
 }
 
