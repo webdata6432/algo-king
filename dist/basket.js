@@ -57,9 +57,28 @@ function builderPage(){
  button.disabled=true;
  try{await Promise.all(configs.map(async c=>{if(c.rows)return;$('runMessage').textContent='Loading observed minute candles…';
  const first=Date.parse(common.from),last=Date.parse(common.to);
- if(first<Date.now()-30*86400000||last<first)throw Error('Choose dates in the last 30 days for market minutes, or import an older minute CSV.');
- const rows=[];for(let i=first;i<=last;i+=7*86400000){const qs=new URLSearchParams({symbol:c.p.mode==='Options'?c.p.s.split(' ')[0]:c.p.s,...(c.p.contractKey?{contract:c.p.contractKey}:{}),from:new Date(i).toISOString().slice(0,10),to:new Date(Math.min(last,i+6*86400000)).toISOString().slice(0,10)});
- const response=await fetch(authOrigin+'/functions/v1/market-minute?'+qs);const data=await response.json();if(!response.ok)throw Error(c.p.s+' · '+(data.error||'Market feed unavailable'));rows.push(...data.rows);c.p.source=data.source+' · observed minute candles · '+c.p.s}c.rows=rows;
+ const useFyers=['Equity','Index'].includes(c.p.mode)&&!!session;
+ if(!Number.isFinite(first)||!Number.isFinite(last)||last<first)throw Error('Check the selected dates.');
+ const rows=[],providers=new Set();
+ for(let i=first;i<=last;i+=7*86400000){
+  const from=new Date(i).toISOString().slice(0,10),to=new Date(Math.min(last,i+6*86400000)).toISOString().slice(0,10);
+  const recent=i>Date.now()-30*86400000;
+  let data;
+  if(useFyers){
+   try{data=await fyersRequest('history',{symbol:c.p.s,from,to})}catch(err){if(!recent)throw err}
+  }
+  if(!data){
+   if(!recent)throw Error('Older equity and index history requires a FYERS connection. For this contract, import minute CSV data.');
+   const qs=new URLSearchParams({symbol:c.p.mode==='Options'?c.p.s.split(' ')[0]:c.p.s,...(c.p.contractKey?{contract:c.p.contractKey}:{}),from,to});
+   const response=await fetch(authOrigin+'/functions/v1/market-minute?'+qs);
+   data=await response.json();
+   if(!response.ok)throw Error(c.p.s+' · '+(data.error||'Market feed unavailable'));
+  }
+  rows.push(...data.rows);if(data.rows.length)providers.add(data.source);
+ }
+ if(!rows.length)throw Error(c.p.s+' · No minute candles in this date range.');
+ c.p.source=[...providers].join(' / ')+' · observed minute candles · '+c.p.s;
+ c.rows=rows;
  }))}finally{button.disabled=false}if(!form.isConnected)return;
  const runs=configs.map(({p,rows})=>simulate(rows,{...p,...common}));let shared=new Set(runs[0].trades.map(t=>t.entryDay));for(let r of runs){let dates=new Set(r.trades.map(t=>t.entryDay));shared=new Set([...shared].filter(d=>dates.has(d)))}
  let trades=runs.flatMap((r,i)=>r.trades.filter(t=>shared.has(t.entryDay)).map(t=>({...t,s:r.p.s,side:r.p.side,qty:r.p.qty,stop:r.p.stop,stopUnit:r.p.stopUnit,leg:i+1}))).sort((a,b)=>(a.d+a.exit).localeCompare(b.d+b.exit)||a.leg-b.leg);

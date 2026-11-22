@@ -61,6 +61,26 @@ Deno.serve(async req=>{
       if(saved.error||!saved.data)throw Error();
       return reply({connected:true});
     }
+    if(body.action==="history"&&cfg.token){
+      const {symbol,from,to}=body;
+      const indices:Record<string,string>={"NIFTY 50":"NSE:NIFTY50-INDEX",SENSEX:"BSE:SENSEX-INDEX",BANKNIFTY:"NSE:NIFTYBANK-INDEX","NIFTY MIDCAP 100":"NSE:NIFTYMIDCAP100-INDEX"};
+      const aliases:Record<string,string>={GMRINFRA:"GMRAIRPORT",BIRLASOFT:"BSOFT"};
+      const validDate=(s:unknown)=>typeof s==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&Number.isFinite(Date.parse(s))&&new Date(s).toISOString().slice(0,10)===s;
+      if(typeof symbol!=="string"||!(Object.hasOwn(indices,symbol)||/^[A-Z0-9&-]{1,32}$/.test(symbol))||!validDate(from)||!validDate(to)||to<from||Date.parse(to)-Date.parse(from)>6*86400000)return reply({error:"Check the stock and date range"},400);
+      const ticker=indices[symbol]||"NSE:"+(aliases[symbol]||symbol)+"-EQ";
+      const params=new URLSearchParams({symbol:ticker,resolution:"1",date_format:"1",range_from:from,range_to:to,cont_flag:"1"});
+      const response=await fetch("https://api-t1.fyers.in/data/history?"+params,{headers:{Authorization:cfg.id+":"+cfg.token},signal:AbortSignal.timeout(14000)});
+      const data=await response.json();
+      if(data.s==="no_data")return reply({source:"FYERS",symbol,rows:[]});
+      if(!response.ok||data.s!=="ok"||!Array.isArray(data.candles))return reply({error:"FYERS history unavailable for "+symbol+". Check the symbol or reconnect."},409);
+      const unique=new Map<number,{d:string,m:number,o:number,h:number,l:number,c:number}>();
+      for(const [epoch,o,h,l,c] of data.candles){
+        if(!Number.isSafeInteger(epoch)||epoch<=0||epoch>Math.floor(Date.now()/1000)||![o,h,l,c].every(n=>Number.isFinite(n)&&n>0)||l>Math.min(o,c)||h<Math.max(o,c))continue;
+        const ist=new Date(epoch*1000+19800000),d=ist.toISOString().slice(0,10),m=ist.getUTCHours()*60+ist.getUTCMinutes();
+        if(d>=from&&d<=to&&m>=555&&m<930)unique.set(epoch,{d,m,o,h,l,c});
+      }
+      return reply({source:"FYERS",symbol,rows:[...unique.values()].sort((a,b)=>a.d.localeCompare(b.d)||a.m-b.m)});
+    }
     if(body.action!=="quotes"||!cfg.token)return reply({error:"Connect to FYERS first"},409);
     const res=await fetch("https://api-t1.fyers.in/data/quotes?symbols=NSE%3ANIFTY50-INDEX%2CBSE%3ASENSEX-INDEX",{headers:{Authorization:cfg.id+":"+cfg.token},signal:AbortSignal.timeout(8000)});
     const q=await res.json();
