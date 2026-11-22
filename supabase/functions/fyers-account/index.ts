@@ -61,16 +61,25 @@ Deno.serve(async req=>{
       if(saved.error||!saved.data)throw Error();
       return reply({connected:true});
     }
-    if(body.action==="dailyScan"){
+    if(body.action==="dailyScan"||body.action==="cachedScan"){
       if(!cfg.token)return reply({error:"Connect FYERS before scanning."},409);
       const {tickers,from,to}=body;
       const valid=(d:string)=>typeof d==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(d)&&Number.isFinite(Date.parse(d))&&new Date(d).toISOString().slice(0,10)===d;
-      if(!Array.isArray(tickers)||!tickers.length||tickers.length>8||!tickers.every(t=>typeof t==="string"&&/^(NSE|BSE):[A-Z0-9&._ -]{1,65}$/.test(t))||!valid(from)||!valid(to)||from>to||Date.parse(to)-Date.parse(from)>349*86400000)return reply({error:"Invalid scan range or instruments."},400);
+      if(!Array.isArray(tickers)||!tickers.length||tickers.length>(body.action==="cachedScan"?200:20)||!tickers.every(t=>typeof t==="string"&&/^(NSE|BSE):[A-Z0-9&._ -]{1,65}$/.test(t))||!valid(from)||!valid(to)||from>to||Date.parse(to)-Date.parse(from)>349*86400000)return reply({error:"Invalid scan range or instruments."},400);
       const rows:Record<string,number[][]>={},unavailable:string[]=[];
+      const {data:cached,error:cacheError}=await db.rpc("read_fyers_scan",{p_owner:uid,p_symbols:tickers,p_from:from,p_to:to});
+      if(cacheError)throw cacheError;
+      const found=new Set<string>();
+      for(const item of cached){
+        found.add(item.ticker);
+        if(item.bars===null)unavailable.push(item.ticker);else rows[item.ticker]=item.bars;
+      }
+      const missing=tickers.filter((t:string)=>!found.has(t));
+      if(body.action==="cachedScan"||!missing.length)return reply({rows,unavailable,missing});
       const since=new Date(Date.parse(from)-12*86400000).toISOString().slice(0,10);
       const ist=new Date(Date.now()+19800000),today=ist.toISOString().slice(0,10);
-      for(let i=0;i<tickers.length;i+=2){
-        await Promise.all(tickers.slice(i,i+2).map(async ticker=>{
+      for(let i=0;i<missing.length;i+=3){
+        await Promise.all(missing.slice(i,i+3).map(async ticker=>{
           const params=new URLSearchParams({symbol:ticker,resolution:"D",date_format:"1",range_from:since,range_to:to,cont_flag:"1"});
           const res=await fetch("https://api-t1.fyers.in/data/history?"+params,{headers:{Authorization:cfg.id+":"+cfg.token},signal:AbortSignal.timeout(16000)});
           const data=await res.json();
@@ -88,8 +97,11 @@ Deno.serve(async req=>{
           }
           rows[ticker]=bars;
         }));
-        if(i+2<tickers.length)await new Promise(resolve=>setTimeout(resolve,650));
+        if(i+3<missing.length)await new Promise(resolve=>setTimeout(resolve,900));
       }
+      const records=missing.map((ticker:string)=>({user_id:uid,ticker,first_day:from,last_day:to,bars:rows[ticker]??null,refreshed_at:new Date().toISOString()}));
+      const {error:saveError}=await db.from("fyers_daily_cache").upsert(records);
+      if(saveError)throw saveError;
       return reply({rows,unavailable});
     }
     if((body.action==="stockQuotes"||body.action==="depth")&&cfg.token){

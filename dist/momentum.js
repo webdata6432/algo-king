@@ -48,30 +48,39 @@ function market(){
    const q=query.toUpperCase(),list=(q?[...capDirectory.companies,...marketIndices]:cap==='Indices'?marketIndices:capDirectory.companies)
     .filter(([s,n,c])=>q?(s+' '+n).toUpperCase().includes(q):cap==='All stocks'||cap==='Indices'||c===cap);
    const range=from+'|'+to;
-   if(scanCache?.range!==range)scanCache={range,bars:new Map()};
+   if(scanCache?.range!==range||Date.now()-scanCache.at>300000)scanCache={range,bars:new Map(),at:Date.now()};
    const cache=scanCache.bars;
    const tickers=[...new Set(list.map(i=>i[3]).filter(Boolean))],missing=tickers.filter(t=>!cache.has(t));
    const day=86400000;
-   for(let i=0;i<missing.length;i+=8){
+   // Query many cached instruments together. Only cache misses need broker calls.
+   let checked=tickers.length-missing.length;
+   const width=Math.max(24,Math.min(200,Math.floor(10000/(1+(Date.parse(to)-Date.parse(from))/day))));
+   for(let offset=0;offset<missing.length;offset+=width){
     if(!active())return;
-    status.textContent='FYERS · '+(tickers.length-missing.length+i)+' / '+tickers.length+' instruments checked. Ranking after the full scan.';
-    const batch=missing.slice(i,i+8),series=new Map(batch.map(t=>[t,[]]));
+    const group=missing.slice(offset,offset+width),series=new Map(group.map(t=>[t,[]]));
+    const append=(data)=>{
+     for(const t of data.unavailable)series.set(t,null);
+     for(const [t,bars] of Object.entries(data.rows)){const saved=series.get(t);if(saved)saved.push(...bars)}
+    };
     for(let start=Date.parse(from);start<=Date.parse(to);start+=350*day){
      if(!active())return;
-     const args={tickers:batch,from:new Date(start).toISOString().slice(0,10),to:new Date(Math.min(Date.parse(to),start+349*day)).toISOString().slice(0,10)};
-     let data;
-     for(let attempt=0;;attempt++){
-      try{data=await fyersRequest('dailyScan',args);break}
-      catch(err){if(attempt>=2||!String(err.message).includes('rate limit'))throw err;
-       status.textContent='FYERS rate limit · resuming in one minute.';await delay(61000);if(!active())return}
-     }
-     for(const t of batch){
-      if(data.unavailable.includes(t)){series.set(t,null);continue}
-      const a=series.get(t);if(a)for(const r of data.rows[t])a.push(r);
+     const dates={from:new Date(start).toISOString().slice(0,10),to:new Date(Math.min(Date.parse(to),start+349*day)).toISOString().slice(0,10)};
+     status.textContent='Checking saved FYERS candles · '+checked+' / '+tickers.length;
+     const found=await fyersRequest('cachedScan',{tickers:group,...dates});
+     append(found);
+     for(let n=0;n<found.missing.length;n+=20){
+      const batch=found.missing.slice(n,n+20);
+      for(let attempt=0;;attempt++){
+       if(!active())return;
+       status.textContent='Fetching FYERS history · '+(checked+group.length-found.missing.length+n)+' / '+tickers.length;
+       try{append(await fyersRequest('dailyScan',{tickers:batch,...dates}));break}
+       catch(err){if(attempt>=2||!String(err.message).includes('rate limit'))throw err;
+        status.textContent='FYERS rate limit · resuming in one minute.';await delay(61000)}
+      }
      }
     }
     for(const [t,a] of series)cache.set(t,a);
-    if(i+8<missing.length)await delay(500);
+    checked+=group.length;
    }
    if(!active())return;
    const matches=[];let noData=0,unmapped=0;
