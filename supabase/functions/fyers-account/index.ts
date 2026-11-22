@@ -61,6 +61,31 @@ Deno.serve(async req=>{
       if(saved.error||!saved.data)throw Error();
       return reply({connected:true});
     }
+    if((body.action==="stockQuotes"||body.action==="depth")&&cfg.token){
+      const symbols=body.symbols;
+      const indices:Record<string,string>={"NIFTY 50":"NSE:NIFTY50-INDEX",SENSEX:"BSE:SENSEX-INDEX",BANKNIFTY:"NSE:NIFTYBANK-INDEX","NIFTY MIDCAP 100":"NSE:NIFTYMIDCAP100-INDEX"};
+      const aliases:Record<string,string>={GMRINFRA:"GMRAIRPORT",BIRLASOFT:"BSOFT"};
+      const depth=body.action==="depth";
+      if(!Array.isArray(symbols)||!symbols.length||symbols.length>(depth?1:50)||!symbols.every(s=>typeof s==="string"&&(/^[A-Z0-9&-]{1,32}$/.test(s)||Object.hasOwn(indices,s))))return reply({error:"Choose a valid instrument"},400);
+      const instruments=new Map<string,string>();
+      for(const s of symbols){
+        const ticker=indices[s]||"NSE:"+(aliases[s]||s)+(s==="HFCL"?"-BE":"-EQ");
+        instruments.set(ticker,s);
+      }
+      const tickers=[...instruments.keys()].join(",");
+      const params=depth?new URLSearchParams({symbol:tickers,ohlcv_flag:"1"}):new URLSearchParams({symbols:tickers});
+      const res=await fetch("https://api-t1.fyers.in/data/"+(depth?"depth":"quotes")+"?"+params,{headers:{Authorization:cfg.id+":"+cfg.token},signal:AbortSignal.timeout(9000)});
+      const result=await res.json();
+      if(!res.ok||result.s!=="ok")return reply({error:"FYERS could not supply this feed. Check the symbol and your FYERS session."},409);
+      if(depth){
+        const d=result.d?.[tickers];
+        if(!d||d.s==="error"||(!Array.isArray(d.bids)&&!Array.isArray(d.ask)))return reply({error:"No order book available for this stock."},404);
+        const levels=(items:any[])=>Array.isArray(items)?items.filter(x=>Number.isFinite(x.price)&&x.price>0&&Number.isFinite(x.volume)&&x.volume>0).map(x=>({price:x.price,quantity:x.volume,orders:x.ord??null})):[];
+        return reply({symbol:symbols[0],price:d.ltp,time:Number(d.ltt||0)*1000,bids:levels(d.bids),asks:levels(d.ask),received:Date.now()});
+      }
+      const quotes=(result.d||[]).filter((x:any)=>instruments.has(x.n)&&x.s==="ok"&&x.v?.lp>0).map((x:any)=>({symbol:instruments.get(x.n),price:x.v.lp,open:x.v.open_price,prev:x.v.prev_close_price,time:Number(x.v.tt||0)*1000,source:"FYERS"}));
+      return reply({quotes});
+    }
     if(body.action==="history"&&cfg.token){
       const {symbol,from,to}=body;
       const indices:Record<string,string>={"NIFTY 50":"NSE:NIFTY50-INDEX",SENSEX:"BSE:SENSEX-INDEX",BANKNIFTY:"NSE:NIFTYBANK-INDEX","NIFTY MIDCAP 100":"NSE:NIFTYMIDCAP100-INDEX"};

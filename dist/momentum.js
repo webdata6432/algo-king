@@ -19,18 +19,32 @@ function market(){
 function inspectRank(i){let x=leaderboard[i],rs=x.rows,base=rs[0].c/(1+(rs[0].a||0)/100),rows=rs.map(r=>({...r,cumulative:100*(r.c/base-1),tip:r.d+'\nOpen '+fmt(r.o)+' · Close '+fmt(r.c)+'\nIntraday '+signed(r.i)+'% · Actual '+(r.a==null?'—':signed(r.a)+'%')})),headers=['Session','Open','Close','Points','Intraday %','Actual %','Cumulative actual %',...levels.map(n=>'≥'+n+'%')];modal(x.s+' · Session detail','<p class="hint" id="latestMarketQuote">Checking latest market quote…</p>'+note(esc(x.source)+' · '+rs[0].d+' — '+rs.at(-1).d+' · '+rs.length+' sessions')+metrics([['Total incl. gaps',pct(x.actual)],['Change in points',signed(x.points)],['Last session · '+rs.at(-1).d,pct(rs.at(-1).i)]])+'<h3>Daily open-to-close move</h3>'+plot(rows.map(r=>({...r,tip:r.d+' · '+signed(r.i)+'%'})),'i','#42d995',true)+'<h3>Cumulative actual return</h3>'+plot(rows.map(r=>({...r,tip:r.d+' · '+signed(r.cumulative)+'%'})),'cumulative','#4fe3ac')+'<div class="row"><h3>Historical candles</h3><button id="historyCSV">Export CSV</button></div>'+table(headers,rows.map(r=>[r.d,fmt(r.o),fmt(r.c),signed(r.c-r.o),pct(r.i),pct(r.a),pct(r.cumulative),...levels.map(n=>Math.abs(r.i)>=n?'✓':'—')])));trackMarketQuote(x.s,$('latestMarketQuote'));$('historyCSV').onclick=()=>csv(x.s+'-history',[headers,...rows.map(r=>[r.d,r.o,r.c,r.c-r.o,r.i,r.a,r.cumulative,...levels.map(n=>Math.abs(r.i)>=n)])])}
 let marketTab='Rankings',reportSymbol='',direction='Both';
 function stockGroup(s){return caps[groups.findIndex(g=>g.includes(s))]||(indices.includes(s)?'Index':'Imported')}
+function showReturnQuotes(host,symbols){
+ const area=document.createElement('section'),body=document.createElement('div'),title=document.createElement('h3');
+ title.textContent='Latest market returns';area.append(title,body);host.prepend(area);
+ body.textContent='Checking FYERS quotes…';
+ setTimeout(()=>pollWhile(body,30000,()=>stockQuotes(symbols),quotes=>{
+  const lookup=new Map(quotes.map(q=>[q.symbol,q]));
+  const change=(price,base)=>base>0?pct(100*(price-base)/base):'—';
+  body.innerHTML=table(['Stock','Latest ₹ / pts','From open','Incl. gap','FYERS quote time'],symbols.map(s=>{
+   const q=lookup.get(s);return q?[esc(s),fmt(q.price),change(q.price,q.open),change(q.price,q.prev),esc(quoteTime(q.time))]:[esc(s),'—','—','—','Quote unavailable'];
+  }));
+ },err=>body.textContent=err.message),350);
+}
 function renderRankings(){
  const root=$('rank');root.innerHTML='<div class="viewtabs">'+['Rankings','Daily report'].map(n=>'<button class="'+(marketTab===n?'selected':'')+'">'+n+'</button>').join('')+'</div><div id="rankBody"></div>';
  root.querySelectorAll('.viewtabs button').forEach(b=>b.onclick=()=>{marketTab=b.textContent;renderRankings()});
- const body=$('rankBody');if(!leaderboard.length){body.innerHTML=empty('No matching sessions. Try another date or stock.');return}
+ const body=$('rankBody');if(!leaderboard.length){body.innerHTML=empty('No matching sessions. Try another date or stock.');
+ const typed=filters.query.trim().toUpperCase();if(/^[A-Z0-9&-]{1,32}$/.test(typed))showReturnQuotes(root,[typed]);return}
  if(marketTab==='Daily report'){
-  let x=leaderboard.find(x=>x.s===reportSymbol)||leaderboard[0];reportSymbol=x.s;
+  let x=leaderboard.find(x=>x.s===reportSymbol)||leaderboard[0];reportSymbol=x.s;showReturnQuotes(root,[x.s]);
   let rs=x.rows.filter(r=>direction==='Both'||(direction==='Up'?r.i>=0:r.i<0)).slice().reverse();
   let cols=['Date','Stock','Open','Close','Change ₹ / pts','Open → close %','Incl. gap %',...levels.map(n=>'≥'+n+'%')];
   const row=r=>[r.d,x.s,r.o,r.c,r.c-r.o,r.i,r.a,...levels.map(n=>Math.abs(r.i)>=n?'Yes':'—')];
   body.innerHTML='<div class="actions reportFilters">'+select('Stock','reportStock',leaderboard.map(x=>x.s))+select('Direction','reportDirection',['Both','Up','Down'])+'<button id="downloadReport">Export CSV</button></div>'+note(esc(x.source)+' · '+rs.length+' sessions')+table(cols,rs.map(r=>[r.d,esc(x.s),fmt(r.o),fmt(r.c),'<span class="'+col(r.c-r.o)+'">'+signed(r.c-r.o)+'</span>',pct(r.i),pct(r.a),...row(r).slice(7)]));
   $('reportStock').value=x.s;$('reportDirection').value=direction;$('reportStock').onchange=e=>{reportSymbol=e.target.value;renderRankings()};$('reportDirection').onchange=e=>{direction=e.target.value;renderRankings()};$('downloadReport').onclick=()=>csv(x.s+'-daily',[cols,...rs.map(row)]);return
  }
+ showReturnQuotes(root,leaderboard.map(x=>x.s));
  let cols=['Rank · Stock','Group','Hit days','Hit rate','Avg |move|','Max up','Max down','Latest date','Change ₹ / pts','Open → close %','Incl. gap %',...(filters.cut==='All'?levels.map(n=>'≥'+n+'% hits'):[]),'Period incl. gaps','Source'];
  let rows=leaderboard.map(x=>{let r=x.rows.at(-1),moves=x.rows.map(r=>r.i);return [x.s,stockGroup(x.s),x.score+'/'+moves.length,100*x.score/moves.length,mean(moves.map(Math.abs)),Math.max(0,...moves),Math.min(0,...moves),r.d,r.c-r.o,r.i,r.a,...(filters.cut==='All'?x.hits:[]),x.actual,x.source]});
  body.innerHTML='<div class="row"><p class="hint">Select a stock to inspect its sessions.</p><button id="rankCSV">Export rankings</button></div>'+table(cols,rows.map((r,i)=>['<button onclick="inspectRank('+i+')">'+(i+1)+'. '+esc(r[0])+'</button>','<span class="capBadge">'+esc(r[1])+'</span>',r[2],'<span class="hitTrack"><i style="width:'+r[3]+'%"></i></span>'+fmt(r[3],1)+'%',fmt(r[4])+'%',pct(r[5]),pct(r[6]),r[7],'<span class="'+col(r[8])+'">'+signed(r[8])+'</span>',pct(r[9]),pct(r[10]),...r.slice(11,-2),pct(r.at(-2)),esc(r.at(-1))]));
@@ -41,7 +55,7 @@ async function trackMarketQuote(symbol,node){
  async function update(){
   if(!node.isConnected||!$('dlg').open)return;
   try{
-   let q;if(session)q=await accountRequest('/functions/v1/angel-account',{action:'quote',symbol},session.access_token).catch(()=>null);
+   let q;if(session)q=(await stockQuotes([symbol]).catch(()=>[]))[0];if(session&&!q?.price)q=await accountRequest('/functions/v1/angel-account',{action:'quote',symbol},session.access_token).catch(()=>null);
    if(!q?.price){const r=await fetch(authOrigin+'/functions/v1/market-minute?mode=quote&symbol='+encodeURIComponent(symbol));if(!r.ok)throw Error();q=await r.json()}
    const stamp=q.asOf||(q.time?new Date(q.time).toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})+' IST':'Time unavailable');
    const match=String(q.asOf||'').match(/^(\d{2})-([A-Za-z]{3})-(\d{4}) (\d{2}:\d{2}:\d{2})$/);const timestamp=q.time||(match?Date.parse(match[1]+' '+match[2]+' '+match[3]+' '+match[4]+' GMT+0530'):NaN);const age=Date.now()-timestamp;const quality=Number.isFinite(age)&&age>=0?(age<=1800000?'Within 30 min':'Last known · over 30 min'):'Timestamp unverified';
