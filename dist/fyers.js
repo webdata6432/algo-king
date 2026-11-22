@@ -7,6 +7,10 @@ async function fyersRequest(action,details={}){
   if(session!==owner)throw Error('Reopen your workspace.');
   sessionChanged(refreshed);
  }
+ if(action==='archiveRank'){
+  const {from,to,cap,query,cut,limit}=details;
+  return accountRequest('/rest/v1/rpc/owner_momentum_archive',{p_from:from,p_to:to,p_cap:cap,p_query:query,p_cut:cut,p_limit:limit},session.access_token);
+ }
  return accountRequest('/functions/v1/fyers-account',{action,...details},session.access_token);
 }
 const angelPanel=angel;
