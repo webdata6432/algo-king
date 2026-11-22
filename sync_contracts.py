@@ -18,8 +18,10 @@ for exchange,symbol in [('NSE','NIFTY'),('BSE','SENSEX')]:
         Path('dist/market/shares.json').write_text(json.dumps(shares,separators=(',',':')))
     options=[x for x in master if x.get('underlying_symbol')==symbol and x.get('instrument_type') in ('CE','PE')]
     expiries=sorted({x['expiry'] for x in options if datetime.fromtimestamp(x['expiry']/1000,ist).date()>=datetime.now(ist).date()})[:4]
+    monthly=sorted({x['expiry'] for x in options if x.get('weekly') is False and datetime.fromtimestamp(x['expiry']/1000,ist).date()>=datetime.now(ist).date()})
+    expiries=set(expiries+monthly[:2])
     if not expiries:raise ValueError('No active expiries for '+symbol)
     for x in options:
         if x['expiry'] in expiries:
-            result.append([x['trading_symbol'],x['instrument_key'],datetime.fromtimestamp(x['expiry']/1000,ist).date().isoformat(),x['strike_price'],x['instrument_type'],x['lot_size']])
+            result.append([x['trading_symbol'],x['instrument_key'],datetime.fromtimestamp(x['expiry']/1000,ist).date().isoformat(),x['strike_price'],x['instrument_type'],x['lot_size'],x.get('weekly') is False])
 target.write_text(json.dumps(sorted(result),separators=(',',':')))
