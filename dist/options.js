@@ -24,6 +24,7 @@ function pickOption(chain,p,day,spot){
  if(p.strikeMode==='Strike price')return strikes.find(c=>c[3]===p.strikePrice);
  if(!strikes.length||!(spot>0)||spot<strikes[0][3]||spot>strikes.at(-1)[3])return;
  let atm=0;for(let i=1;i<strikes.length;i++)if(Math.abs(strikes[i][3]-spot)<Math.abs(strikes[atm][3]-spot))atm=i;
+ if(p.strikeMode==='Market price')return strikes[atm];
  const offset=p.money==='ATM'?0:p.steps*(p.money==='OTM'?1:-1)*(p.cp==='CE'?1:-1);
  return strikes[atm+offset];
 }
