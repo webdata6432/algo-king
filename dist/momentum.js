@@ -28,16 +28,17 @@ function market(){
  const today=new Date(Date.now()+19800000).toISOString().slice(0,10);
  $('app').innerHTML=heading('Market returns','Intraday momentum','Scan saved exchange sessions for the selected period.')+
  '<section class="panel"><h2>Dates</h2><div class="fields">'+select('Date range','period',presetNames)+input('From','mf',filters.from,'date')+input('Through','mt',filters.to,'date')+select('Absolute move ≥','cut',['1%','2%','3%','5%','All'])+'</div></section>'+
- '<section class="panel"><h2>Stock filters</h2><div class="fields">'+input('Search','query',filters.query,'search','placeholder="Name or symbol"')+input('Show top','topN',filters.limit,'number','min="1" step="1"')+'</div><div class="fields">'+select('Stock group','universeCap',['All stocks',...caps,'Indices'])+'</div><button class="primary" id="scan">Scan stocks</button> <button id="brokerScan" hidden>Scan directly with FYERS</button><p id="scanStatus" role="status"></p><div id="rank"></div></section>';
- const host=$('rank'),status=$('scanStatus'),button=$('scan');
+ '<section class="panel"><h2>Stock filters</h2><div class="fields">'+input('Search','query',filters.query,'search','placeholder="Name or symbol"')+input('Show top','topN',filters.limit,'number','min="1" step="1"')+'</div><div class="fields">'+select('Stock group','universeCap',['All stocks',...caps,'Indices'])+'</div><p id="scanStatus" role="status"></p><div id="rank"></div></section>';
+ const host=$('rank'),status=$('scanStatus');
  const search=$('query'),suggestions=document.createElement('span');
  suggestions.className='searchMatches';suggestions.id='momentumNames';search.after(suggestions);
  search.autocomplete='off';search.setAttribute('aria-controls',suggestions.id);
  let selected=null,version=0;
  async function suggest(){
-  selected=null;changed();suggestions.replaceChildren();
+  selected=null;version++;read();host.replaceChildren();suggestions.replaceChildren();
   const raw=search.value.trim(),normalize=s=>s.toUpperCase().replace(/[^A-Z0-9]/g,''),q=normalize(raw);
-  if(!q)return;
+  if(!q){if(!raw)scan();else status.textContent='Enter a stock name or symbol.';return}
+  status.textContent='Choose a stock from the suggestions.';
   try{
    const all=await stockDirectory();
    if(search.value.trim()!==raw||document.activeElement!==search)return;
@@ -45,6 +46,7 @@ function market(){
     .sort((a,b)=>Number(normalize(b[0])===q)-Number(normalize(a[0])===q)||Number(normalize(b[0]).startsWith(q))-Number(normalize(a[0]).startsWith(q))).slice(0,20);
    for(const row of found){
     const option=document.createElement('button');option.type='button';option.textContent=row[0]+' · '+row[1];
+    option.onmousedown=e=>e.preventDefault();
     option.onclick=e=>{e.preventDefault();selected=row;search.value=row[0];suggestions.replaceChildren();scan()};
     suggestions.append(option);
    }
@@ -62,13 +64,12 @@ function market(){
   $('mt').disabled=$('mf').disabled=!custom;
   Object.assign(filters,{period:preset,from:$('mf').value,to:$('mt').value,cap:$('universeCap').value,query:$('query').value.trim(),cut:$('cut').value,limit:Math.max(1,Math.floor(+$('topN').value||1))});
  }
- function changed(){document.getElementById("brokerScan").hidden=true;version++;read();host.replaceChildren();button.disabled=false;status.textContent='Select Scan stocks to rank this group.'}
  async function scan(broker=false){
   read();const v=++version,active=()=>v===version&&host.isConnected;
   const {from,to,cap}=filters,query=selected?selected[0]+' '+selected[1]:filters.query;
   host.replaceChildren();
   if(!from||!to||from>to||to>today){status.textContent='Select a valid range ending today or earlier.';return}
-  button.disabled=true;
+
   try{
    if(!broker){
     status.textContent='Ranking stored sessions…';
@@ -82,13 +83,12 @@ function market(){
     });
     const pending=result.pending;
     status.textContent=(pending?'Archive updating · provisional ranking · '+pending+' pending. ':'Full archive scan · ')+result.total+' in group · '+result.unavailable+' unavailable · '+result.withData+' with sessions · '+result.matched+' matching · '+leaderboard.length+' shown.';
-    document.getElementById('brokerScan').hidden=!pending;
     renderRankings();return;
    }
+   if(!selected)return;
    if(!capDirectory)await stockDirectory();
    if(!active())return;
-   const q=query.toUpperCase(),list=(q?[...capDirectory.companies,...marketIndices]:cap==='Indices'?marketIndices:capDirectory.companies)
-    .filter(([s,n,c])=>q?(s+' '+n).toUpperCase().includes(q):cap==='All stocks'||cap==='Indices'||c===cap);
+   const q=query.toUpperCase(),list=[selected];
    const range=from+'|'+to;
    if(scanCache?.range!==range||Date.now()-scanCache.at>300000)scanCache={range,bars:new Map(),at:Date.now()};
    const cache=scanCache.bars;
@@ -139,13 +139,11 @@ function market(){
    leaderboard=(q||cap==='Indices'?matches:matches.slice(0,filters.limit)).map(x=>({...x,rows:candles(cache.get(x.ticker))}));
    status.textContent=list.length+' in group · '+(list.length-unmapped-noData)+' with candles · '+matches.length+' matching · '+leaderboard.length+' shown · '+noData+' with no sessions · '+unmapped+' unavailable. Current AMFI classification.';
    renderRankings();
-  }catch(err){if(active())status.textContent=err.message+' Scan again to resume this range.'}
-  finally{if(active())button.disabled=false}
+  }catch(err){if(active())status.textContent=err.message+' Select the stock or group again to retry.'}
  }
- $('universeCap').onchange=()=>{selected=null;search.value='';suggestions.replaceChildren();changed()};
- for(const id of ['period','mf','mt'])$(id).addEventListener('change',changed);
- for(const id of ['cut','topN'])$(id).onchange=()=>{if(host.children.length)scan();else changed()};
- button.onclick=()=>scan();document.getElementById("brokerScan").onclick=()=>scan(true);changed();
+ $('universeCap').onchange=()=>{selected=null;search.value='';suggestions.replaceChildren();scan()};
+ for(const id of ['period','mf','mt','cut','topN'])$(id).addEventListener('change',()=>scan());
+ scan();
 }
 function inspectRank(i){let x=leaderboard[i],rs=x.rows,base=x.base,rows=rs.map(r=>({...r,cumulative:100*(r.c/base-1),tip:r.d+'\nOpen '+fmt(r.o)+' · Close '+fmt(r.c)+'\nIntraday '+signed(r.i)+'% · Actual '+(r.a==null?'—':signed(r.a)+'%')})),headers=['Session','Open','Close','Points','Intraday %','Actual %','Cumulative actual %',...levels.map(n=>'≥'+n+'%')];modal(x.s+' · Session detail','<p class="hint" id="latestMarketQuote">Checking latest market quote…</p>'+note(esc(x.source)+' · '+rs[0].d+' — '+rs.at(-1).d+' · '+rs.length+' sessions')+metrics([['Period incl. gaps',pct(x.actual)],['Peak return',pct(x.peakReturn)],['Max drawdown',pct(x.drawdown)],['Change in points',signed(x.points)],['Last session · '+rs.at(-1).d,pct(rs.at(-1).i)]])+'<h3>Daily open-to-close move</h3>'+plot(rows.map(r=>({...r,tip:r.d+' · '+signed(r.i)+'%'})),'i','#42d995',true)+'<h3>Cumulative actual return</h3>'+plot(rows.map(r=>({...r,tip:r.d+' · '+signed(r.cumulative)+'%'})),'cumulative','#4fe3ac')+'<div class="row"><h3>Historical candles</h3><button id="historyCSV">Export CSV</button></div>'+table(headers,rows.map(r=>[r.d,fmt(r.o),fmt(r.c),signed(r.c-r.o),pct(r.i),pct(r.a),pct(r.cumulative),...levels.map(n=>Math.abs(r.i)>=n?'✓':'—')])));trackMarketQuote(x.s,$('latestMarketQuote'),x.ticker);$('historyCSV').onclick=()=>csv(x.s+'-history',[headers,...rows.map(r=>[r.d,r.o,r.c,r.c-r.o,r.i,r.a,r.cumulative,...levels.map(n=>Math.abs(r.i)>=n)])])}
 let marketTab='Rankings',reportSymbol='',direction='Both';
