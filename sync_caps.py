@@ -16,11 +16,13 @@ url = next(link for link in re.findall(r'https://[^"<>\\\s]+\.xlsx', page)
 sheet = load_workbook(io.BytesIO(download(url)), read_only=True, data_only=True).active
 directory = {}
 by_symbol = {}
+listing_isin = {}
 for exchange in ['BSE','NSE']:
     content = download(f'https://public.fyers.in/sym_details/{exchange}_CM.csv').decode()
     for row in csv.reader(io.StringIO(content)):
         if len(row) > 13 and row[5].startswith('IN') and row[9].startswith(exchange + ':'):
             directory[row[5]] = row[9]
+            listing_isin[row[9]] = row[5]
             by_symbol[exchange, row[13]] = row[9]
 companies = {}
 assigned = set()
@@ -34,7 +36,8 @@ for row in sheet.values:
         ticker = None
     if ticker:
         assigned.add(ticker)
-    companies[isin] = [symbol,row[1],row[10],ticker]
+    exchange = ticker.split(':')[0] if ticker else ('NSE' if row[5] and row[5]!='-' else 'BSE')
+    companies[isin] = [symbol,row[1],row[10],ticker,isin,exchange+'_EQ|'+listing_isin.get(ticker,isin)]
 assert len(companies)>1000
 dest=Path(__file__).parent/'dist/market/caps.json'
 dest.write_text(json.dumps({'source':url,'companies':list(companies.values())},ensure_ascii=True,separators=(',',':')))

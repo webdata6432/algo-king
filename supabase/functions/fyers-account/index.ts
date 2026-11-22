@@ -30,6 +30,13 @@ Deno.serve(async req=>{
     const body=await req.json(),table=db.from("fyers_connections"),uid=user.id;
     const {data:row,error}=await table.select("*").eq("user_id",uid).maybeSingle();
     if(error)throw error;
+    if(body.action==="archiveRank"){
+      const {from,to,cap,query,cut,limit}=body;
+      if(![from,to].every(d=>typeof d==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(d))||from>to||![1,2,3,5].includes(cut)||!Number.isInteger(limit)||limit<1||typeof query!=="string"||query.length>100||!["All stocks","Indices","Small Cap","Large Cap","Mid Cap"].includes(cap))return reply({error:"Check scan filters"},400);
+      const scan=await db.rpc("momentum_archive",{p_from:from,p_to:to,p_cap:cap,p_query:query,p_cut:cut,p_limit:limit});
+      if(scan.error)throw scan.error;
+      return reply(scan.data);
+    }
     if(body.action==="status")return reply({configured:!!row});
     if(body.action==="start"){
       let cfg:Config;
