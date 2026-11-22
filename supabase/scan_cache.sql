@@ -34,3 +34,14 @@ language sql stable set search_path='' as $$
 $$;
 revoke all on function public.read_fyers_scan(uuid,text[],date,date) from public,anon,authenticated;
 grant execute on function public.read_fyers_scan(uuid,text[],date,date) to service_role;
+create index fyers_daily_cache_age on public.fyers_daily_cache(refreshed_at);
+create function public.expire_old_fyers_history() returns trigger
+language plpgsql set search_path='' as $$
+begin
+  delete from public.fyers_daily_cache where refreshed_at < now()-interval '7 days';
+  return null;
+end;
+$$;
+revoke all on function public.expire_old_fyers_history() from public,anon,authenticated;
+create trigger expire_old_fyers_history after insert on public.fyers_daily_cache
+for each statement execute function public.expire_old_fyers_history();
