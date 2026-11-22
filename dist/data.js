@@ -9,6 +9,6 @@ function historyFor(s){if(db[s])return db[s];if(source.live)return [];let h=hash
 function bar(d,o,c,p){return {d,o,c,i:100*(c-o)/o,a:p?100*(c-p)/p:null}}
 function windowRows(s){return historyFor(s).slice(-23)}
 function stats(s){let r=windowRows(s),last=r.at(-1)||{};return {s,r,last,avg:mean(r.map(x=>Math.abs(x.i))),hits:[1,3,5].map(n=>r.filter(x=>Math.abs(x.i)>=n).length)}}
-function csv(name,rows){let data=rows.map(r=>r.map(x=>'"'+String(x??'').replaceAll('"','""')+'"').join(',')).join('\r\n'),u=URL.createObjectURL(new Blob(['\ufeff'+data],{type:'text/csv'})),a=document.createElement('a');a.href=u;a.download=name+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)}
+function csv(name,rows){let data=rows.map(r=>r.map(x=>'"'+displayDates(x??'').replaceAll('"','""')+'"').join(',')).join('\r\n'),u=URL.createObjectURL(new Blob(['\ufeff'+data],{type:'text/csv'})),a=document.createElement('a');a.href=u;a.download=name+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)}
 function modal(title,body){$('inside').innerHTML='<div class="row"><h2>'+esc(title)+'</h2><button onclick="dlg.close()" aria-label="Close">✕</button></div>'+body;if(!$('dlg').open)$('dlg').showModal()}
 

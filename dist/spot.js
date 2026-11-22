@@ -10,7 +10,7 @@
    const fresh=Date.now()-q.time<=180000&&Date.now()>=q.time;
    price.textContent=(i>=2?'₹':'')+q.price.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})+ (i>=2?q.unit.replace('₹',''):'');
    if(q.prev){const change=q.price-q.prev,span=document.createElement('span');span.className=change>=0?'gainText':'lossText';span.textContent=' '+(change>=0?'▲':'▼')+' '+Math.abs(change).toFixed(2)+' ('+(change>=0?'+':'')+(100*change/q.prev).toFixed(2)+'%)';price.append(span)}
-   const stamp=q.date?q.date+' '+q.session:new Date(q.time).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',hour12:false});
+   const stamp=q.date?q.date+' '+q.session:istStamp(q.time);
    status.textContent=(fresh?'Within 3 min':q.date?'IBJA 999 benchmark':'Last known')+' · '+stamp+(q.date?'':' IST');card.title=q.source+' · '+status.textContent;
   });try{localStorage.setItem('ak-spot-last',JSON.stringify(previous))}catch{}
  }

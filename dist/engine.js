@@ -23,7 +23,7 @@ function parseFile(text,symbol){
   const [head,...lines]=readCSV(text.replace(/^\uFEFF/,'')),keys=(head||[]).map(x=>x.toLowerCase());
   let minute=keys.includes('time'),needed=['date','open','close',...(minute?['high','low']:[])];
   if(!needed.every(k=>keys.includes(k)))throw Error('Required columns: '+needed.join(', '));
-  let seen=new Set(),rows=lines.map((line,i)=>{let v=k=>line[keys.indexOf(k)]||'',d=v('date'),t=v('time');
+  let seen=new Set(),rows=lines.map((line,i)=>{let v=k=>line[keys.indexOf(k)]||'',d=v('date').replace(/^(\d{2})-(\d{2})-(\d{4})$/,'$3-$2-$1'),t=v('time');
     let invalid=()=>{throw Error('Invalid or duplicate candle at row '+(i+2)+'. Check the date, symbol, time and prices.')};
     if(keys.includes('symbol')&&v('symbol').toUpperCase()!==symbol)invalid();
     if(!/^\d{4}-\d\d-\d\d$/.test(d)||!Number.isFinite(Date.parse(d))||new Date(d).toISOString().slice(0,10)!==d)invalid();

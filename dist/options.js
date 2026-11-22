@@ -27,7 +27,7 @@ async function simulateOptions(p,common,load){
  const chain=(await optionChain()).filter(c=>c[0].startsWith(p.s+' '));
  const spot=await load(index,null,common.from,common.to);
  const days=[...new Set(spot.map(r=>r.d))].sort(),opens=new Map(spot.filter(r=>r.m===p.entry).map(r=>[r.d,r.o]));
- const trades=[],skipped=[];let busy='';
+ const candles=new Map(),trades=[],skipped=[];let busy='';
  for(const [i,day] of days.entries()){
   if(day<=busy)continue;
   const contract=pickOption(chain,p,day,opens.get(day));
@@ -37,11 +37,13 @@ async function simulateOptions(p,common,load){
   if(!through||through>expiry){skipped.push(day);continue}
   const rows=await load(p.s,key,day,through);
   if(!rows.some(r=>r.d===day)){skipped.push(day);continue}
+  if(!candles.has(name))candles.set(name,new Map());
+  for(const bar of dailyOHLC(rows))candles.get(name).set(bar.d,bar);
   const qty=p.lots*contract[5];
   const run=simulate(rows,{...p,...common,from:day,to:through,qty,expiry});
   const fill=run.trades.find(t=>t.entryDay===day);
   if(fill){trades.push({...fill,s:name,qty});busy=fill.d}
   else if(run.skipped.includes(day))skipped.push(day);
  }
- return {p:{...p,...common,source:'Index options · observed contract minute candles'},trades,skipped};
+ return {p:{...p,...common,source:'Index options · observed contract minute candles'},trades,skipped,prices:[...candles].map(([name,days])=>({name,bars:[...days.values()]}))};
 }

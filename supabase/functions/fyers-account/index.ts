@@ -36,7 +36,7 @@ Deno.serve(async req=>{
       if(error)throw error;
       if(!stock)return reply({error:"Stock missing from the archive directory"},404);
       const day=86400000,ready=!stock.unverifiable&&stock.stage>0&&stock.checked>=(to<stock.desired?to:stock.desired)&&(stock.stage===3||Date.parse(from)>=Date.parse(stock.anchor)-(stock.stage*3650-1)*day);
-      if(ready){
+      if(ready&&body.ohlc!==true){
         const {data:years,error}=await db.from("daily_prices").select("days,opens,closes").eq("ticker",ticker).gte("yr",Number(from.slice(0,4))-1).lte("yr",Number(to.slice(0,4))).order("yr");
         if(error)throw error;
         const bars=[];let prev=null;
@@ -51,10 +51,10 @@ Deno.serve(async req=>{
         const res=await fetch("https://api.upstox.com/v3/historical-candle/"+encodeURIComponent(stock.instrument)+"/days/1/"+hi+"/"+lo,{signal:AbortSignal.timeout(12000)});
         const json=await res.json();
         if(!res.ok||!Array.isArray(json.data?.candles))return reply({error:"Daily history provider unavailable"},502);
-        for(const [stamp,o,,,c] of json.data.candles){const d=stamp.slice(0,10);if(d>=lo&&d<=hi&&o>0&&c>0)values.set(d,[o,c])}
+        for(const [stamp,o,h,l,c] of json.data.candles){const d=stamp.slice(0,10);if(d>=lo&&d<=hi&&o>0&&c>0)values.set(d,body.ohlc===true?[o,c,h,l]:[o,c])}
       }
       const bars=[];let prev=null;
-      for(const d of [...values.keys()].sort()){const [o,c]=values.get(d)!;if(d<from)prev=c;else bars.push([d,o,c])}
+      for(const d of [...values.keys()].sort()){const prices=values.get(d)!;if(d<from)prev=prices[1];else bars.push([d,...prices])}
       return reply({bars,prev,source:"Upstox daily history"});
     }
     const {data:row,error}=await table.select("*").eq("user_id",uid).maybeSingle();

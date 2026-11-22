@@ -159,7 +159,22 @@ function market(){
  for(const id of ['period','mf','mt','cut','topN'])$(id).addEventListener('change',()=>scan());
  scan();
 }
-function inspectRank(i){let x=leaderboard[i],rs=x.rows,base=x.base,rows=rs.map(r=>({...r,cumulative:100*(r.c/base-1),tip:r.d+'\nOpen '+fmt(r.o)+' · Close '+fmt(r.c)+'\nIntraday '+signed(r.i)+'% · Actual '+(r.a==null?'—':signed(r.a)+'%')})),headers=['Session','Open','Close','Points','Intraday %','Actual %','Cumulative actual %',...levels.map(n=>'≥'+n+'%')];modal(x.s+' · Session detail','<p class="hint" id="latestMarketQuote">Checking latest market quote…</p>'+note(esc(x.source)+' · '+rs[0].d+' — '+rs.at(-1).d+' · '+rs.length+' sessions')+metrics([['Period incl. gaps',pct(x.actual)],['Peak return',pct(x.peakReturn)],['Max drawdown',pct(x.drawdown)],['Change in points',signed(x.points)],['Last session · '+rs.at(-1).d,pct(rs.at(-1).i)]])+'<h3>Daily open-to-close move</h3>'+plot(rows.map(r=>({...r,tip:r.d+' · '+signed(r.i)+'%'})),'i','#42d995',true)+'<h3>Cumulative actual return</h3>'+plot(rows.map(r=>({...r,tip:r.d+' · '+signed(r.cumulative)+'%'})),'cumulative','#4fe3ac')+'<div class="row"><h3>Historical candles</h3><button id="historyCSV">Export CSV</button></div>'+table(headers,rows.map(r=>[r.d,fmt(r.o),fmt(r.c),signed(r.c-r.o),pct(r.i),pct(r.a),pct(r.cumulative),...levels.map(n=>Math.abs(r.i)>=n?'✓':'—')])));trackMarketQuote(x.s,$('latestMarketQuote'),x.ticker);$('historyCSV').onclick=()=>csv(x.s+'-history',[headers,...rows.map(r=>[r.d,r.o,r.c,r.c-r.o,r.i,r.a,r.cumulative,...levels.map(n=>Math.abs(r.i)>=n)])])}
+function stockReturnChart(stock){
+ const rows=stock.rows.map(r=>{
+  const total=100*(r.c/stock.base-1);
+  return {...r,total,tip:r.d+'   Total return '+signed(total)+'%\nChng %  '+signed(r.i)+'%     Chng  '+signed(r.c-r.o)+' pts\nO/P  ₹'+fmt(r.o)+'     C/P  ₹'+fmt(r.c)};
+ });
+ let cached;
+ return chartViews('Total return',()=>plot(rows,'total','#2dcc91'),async()=>{
+  if(cached)return cached;
+  const {bars}=await fyersRequest('stockSessions',{ticker:stock.ticker,from:rows[0].d,to:rows.at(-1).d,ohlc:true});
+  const dates=new Set(rows.map(r=>r.d));
+  cached=bars.filter(v=>dates.has(v[0])&&v.length===5).map(([d,o,c,h,l])=>({d,o,c,h,l,tip:d+'   Chng % '+signed(100*(c-o)/o)+'%   Chng '+signed(c-o)+' pts\nO/P ₹'+fmt(o)+'   C/P ₹'+fmt(c)+'\nHigh ₹'+fmt(h)+'   Low ₹'+fmt(l)}));
+  if(!cached.length){cached=null;throw Error('No OHLC candles available for the selected sessions.')}
+  return cached;
+ },'Price candles');
+}
+function inspectRank(i){let x=leaderboard[i],rs=x.rows,base=x.base,rows=rs.map(r=>({...r,cumulative:100*(r.c/base-1),tip:r.d+'\nOpen '+fmt(r.o)+' · Close '+fmt(r.c)+'\nIntraday '+signed(r.i)+'% · Actual '+(r.a==null?'—':signed(r.a)+'%')})),headers=['Session','Open','Close','Points','Intraday %','Actual %','Total return %',...levels.map(n=>'≥'+n+'%')];modal(x.s+' · Session detail','<p class="hint" id="latestMarketQuote">Checking latest market quote…</p>'+note(esc(x.source)+' · '+rs[0].d+' — '+rs.at(-1).d+' · '+rs.length+' sessions')+metrics([['Period incl. gaps',pct(x.actual)],['Peak return',pct(x.peakReturn)],['Max drawdown',pct(x.drawdown)],['Change in points',signed(x.points)],['Last session · '+rs.at(-1).d,pct(rs.at(-1).i)]])+'<h3>Daily open-to-close move</h3>'+plot(rows.map(r=>({...r,tip:r.d+' · '+signed(r.i)+'%'})),'i','#42d995',true)+stockReturnChart(x)+'<div class="row"><h3>Historical candles</h3><button id="historyCSV">Export CSV</button></div>'+table(headers,rows.map(r=>[r.d,fmt(r.o),fmt(r.c),signed(r.c-r.o),pct(r.i),pct(r.a),pct(r.cumulative),...levels.map(n=>Math.abs(r.i)>=n?'✓':'—')])));trackMarketQuote(x.s,$('latestMarketQuote'),x.ticker);$('historyCSV').onclick=()=>csv(x.s+'-history',[headers,...rows.map(r=>[r.d,r.o,r.c,r.c-r.o,r.i,r.a,r.cumulative,...levels.map(n=>Math.abs(r.i)>=n)])])}
 let marketTab='Rankings',reportSymbol='',direction='Both';
 function renderRankings(){
  const root=$('rank');root.innerHTML='<div class="viewtabs">'+['Rankings','Daily report'].map(n=>'<button class="'+(marketTab===n?'selected':'')+'">'+n+'</button>').join('')+'</div><div id="rankBody"></div>';
@@ -171,7 +186,7 @@ function renderRankings(){
   let rs=x.rows.filter(r=>direction==='Both'||(direction==='Up'?r.i>=0:r.i<0)).slice().reverse();
   let cols=['Date','Stock','Open','Close','Change ₹ / pts','Open → close %','Incl. gap %',...levels.map(n=>'≥'+n+'%')];
   const row=r=>[r.d,x.s,r.o,r.c,r.c-r.o,r.i,r.a,...levels.map(n=>Math.abs(r.i)>=n?'Yes':'—')];
-  body.innerHTML='<div class="actions reportFilters">'+select('Stock','reportStock',leaderboard.map(x=>x.s))+select('Direction','reportDirection',['Both','Up','Down'])+'<button id="downloadReport">Export CSV</button></div>'+note(esc(x.source)+' · '+rs.length+' sessions')+table(cols,rs.map(r=>[r.d,esc(x.s),fmt(r.o),fmt(r.c),'<span class="'+col(r.c-r.o)+'">'+signed(r.c-r.o)+'</span>',pct(r.i),pct(r.a),...row(r).slice(7)]));
+  body.innerHTML=stockReturnChart(x)+'<div class="actions reportFilters">'+select('Stock','reportStock',leaderboard.map(x=>x.s))+select('Direction','reportDirection',['Both','Up','Down'])+'<button id="downloadReport">Export CSV</button></div>'+note(esc(x.source)+' · '+rs.length+' sessions')+table(cols,rs.map(r=>[r.d,esc(x.s),fmt(r.o),fmt(r.c),'<span class="'+col(r.c-r.o)+'">'+signed(r.c-r.o)+'</span>',pct(r.i),pct(r.a),...row(r).slice(7)]));
   $('reportStock').value=x.s;$('reportDirection').value=direction;$('reportStock').onchange=e=>{reportSymbol=e.target.value;renderRankings()};$('reportDirection').onchange=e=>{direction=e.target.value;renderRankings()};$('downloadReport').onclick=()=>csv(x.s+'-daily',[cols,...rs.map(row)]);return
  }
 
@@ -187,7 +202,7 @@ async function trackMarketQuote(symbol,node,ticker){
   try{
    let q;if(session)q=(await stockQuotes([ticker||symbol]).catch(()=>[]))[0];if(!q?.price&&ticker?.startsWith('BSE:')&&symbol!=='SENSEX')throw Error();if(session&&!q?.price)q=await accountRequest('/functions/v1/angel-account',{action:'quote',symbol},session.access_token).catch(()=>null);
    if(!q?.price){const r=await fetch(authOrigin+'/functions/v1/market-minute?mode=quote&symbol='+encodeURIComponent(symbol));if(!r.ok)throw Error();q=await r.json()}
-   const stamp=q.asOf||(q.time?new Date(q.time).toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})+' IST':'Time unavailable');
+   const stamp=q.asOf||(q.time?istStamp(q.time)+' IST':'Time unavailable');
    const match=String(q.asOf||'').match(/^(\d{2})-([A-Za-z]{3})-(\d{4}) (\d{2}:\d{2}:\d{2})$/);const timestamp=q.time||(match?Date.parse(match[1]+' '+match[2]+' '+match[3]+' '+match[4]+' GMT+0530'):NaN);const age=Date.now()-timestamp;const quality=Number.isFinite(age)&&age>=0?(age<=1800000?'Within 30 min':'Last known · over 30 min'):'Timestamp unverified';
    node.textContent=quality+' · '+fmt(q.price)+' · '+q.source+' · '+stamp;
   }catch{node.textContent='Latest quote unavailable · historical candles below'}

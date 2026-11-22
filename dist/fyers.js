@@ -54,7 +54,7 @@ angel=function(){
 function quoteTime(time){
  if(!Number.isFinite(time)||time<=0||time>Date.now()+1000)return 'Provider time unavailable';
  const age=(Date.now()-time)/60000;
- return new Date(time).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',second:'2-digit'})+' IST · '+(age<3?'within 3 min':age<30?'within 30 min':'last known');
+ return istStamp(time)+' IST · '+(age<3?'within 3 min':age<30?'within 30 min':'last known');
 }
 async function stockQuotes(symbols){
  const quotes=[];

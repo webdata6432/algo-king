@@ -68,3 +68,12 @@ header:has(.accountTools){width:100%;max-width:none;padding-right:clamp(8px,1vw,
 .legEstimate:not(:empty){grid-column:1/-1;padding:10px 12px;border-left:3px solid #68cbb4;background:#172737;color:#e7f3ff;font-variant-numeric:tabular-nums}.legEstimate:empty{display:none}
 .legRisk .trailEdit{background:transparent;color:inherit;box-shadow:none}
 .legRisk .trailEdit[data-on=true]{background:#245bd2;border-color:#659cff;color:white}
+.interactivePlot{cursor:crosshair;touch-action:pan-y}
+.interactivePlot .chart{height:clamp(220px,32vw,350px)}
+.interactivePlot .chart polyline{animation:none;stroke-dasharray:none}
+.interactivePlot .tip{line-height:1.65;white-space:pre-wrap;background:#101b2c;box-shadow:0 4px 14px #0005}
+.dateDisplay{position:relative;display:block;min-width:0}
+.dateDisplay input[type=date]{width:100%;color:transparent;-webkit-text-fill-color:transparent}
+.dateDisplay input::-webkit-datetime-edit{opacity:0}
+.dateDisplay>span{position:absolute;pointer-events:none;inset-inline-start:12px;top:50%;transform:translateY(-50%);font-variant-numeric:tabular-nums}
+.dateDisplay:focus-within{outline:1px solid #5785e8;border-radius:6px}
