@@ -60,3 +60,8 @@ header{background:radial-gradient(ellipse at 10% 0%,#344150 0,transparent 45%),l
 header .accountTools{margin-inline-start:auto;flex:none;white-space:nowrap}
 header:has(.accountTools){width:100%;max-width:none;padding-right:clamp(8px,1vw,18px)}header .accountTools{margin-left:auto;justify-content:flex-end}.quoteCard small{display:block;font-size:9px}
 .searchMatches:not(:empty){display:grid;gap:2px;max-height:14rem;overflow:auto;border:1px solid #526984;background:#121f30;padding:4px;border-radius:8px}.searchMatches button{height:auto;text-align:left;white-space:normal;padding:9px;font-size:.85rem}
+@media(min-width:1050px){
+ .legrow>.legRisk:not([hidden]){display:grid;grid-column:1/-1;grid-template-columns:minmax(0,1fr) minmax(0,.85fr) repeat(2,minmax(0,1.55fr)) auto;gap:12px;align-items:end}
+ .legrow>.legRisk>label,.legrow>.legRisk>.riskPair{grid-column:auto}
+ .legRisk>.trailEdit{margin:0}
+}
