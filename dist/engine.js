@@ -49,7 +49,7 @@ function simulate(rows,p){
     }
     let overnight=p.holding==='Positional',exitDay=d;
     let a=day.filter(r=>r.m>=p.entry&&r.m<=(overnight?929:p.exit));
-    if(overnight){let dates=[...groups.keys()],next=dates[dates.indexOf(d)+1];if(!next||(p.expiry&&next>p.expiry)||p.exit>929||p.entry<555||a.length!==930-p.entry){skipped.push(d);continue}let tail=groups.get(next).filter(r=>r.m>=555&&r.m<=p.exit);if(tail.length!==p.exit-554){skipped.push(d);continue}exitDay=next;a=a.concat(tail)}
+    if(overnight){let dates=[...groups.keys()],offset=dates.indexOf(d),count=p.holdDays??1,next=dates[offset+count];if(!next||(p.expiry&&next>p.expiry)||p.exit>929||p.entry<555||a.length!==930-p.entry){skipped.push(d);continue}let tail=groups.get(next).filter(r=>r.m>=555&&r.m<=p.exit);if(tail.length!==p.exit-554){skipped.push(d);continue}const middle=dates.slice(offset+1,offset+count).map(date=>groups.get(date).filter(r=>r.m>=555&&r.m<930));if(middle.some(session=>session.length!==375)){skipped.push(d);continue}exitDay=next;a=a.concat(...middle,tail)}
 
     if((!overnight&&a.length!==p.exit-p.entry+1)||a[0]?.m!==p.entry||a.at(-1)?.m!==p.exit){skipped.push(d);continue}
     let fill=a[0].o,touched=false;
