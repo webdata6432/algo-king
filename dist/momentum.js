@@ -47,16 +47,17 @@ function market(){
    for(const row of found){
     const option=document.createElement('button');option.type='button';option.textContent=row[0]+' · '+row[1];
     option.onmousedown=e=>e.preventDefault();
-    option.onclick=e=>{e.preventDefault();selected=row;search.value=row[0];suggestions.replaceChildren();scan()};
+    option.onclick=e=>{e.preventDefault();selected=row;search.value=row[0];suggestions.replaceChildren();marketTab='Daily report';direction='Both';scan()};
     suggestions.append(option);
    }
    if(!found.length)suggestions.textContent='No matches';
   }catch{if(search.value.trim()===raw)suggestions.textContent='Could not load names. Type again to retry.'}
  }
  search.oninput=suggest;
- search.onkeydown=e=>{if(e.key==='ArrowDown'){e.preventDefault();suggestions.querySelector('button')?.focus()}if(e.key==='Escape')suggestions.replaceChildren()};
- search.parentElement.addEventListener('focusout',e=>{if(!e.currentTarget.contains(e.relatedTarget))suggestions.replaceChildren()});
+ search.onkeydown=e=>{if(e.key==='Enter'){const first=suggestions.querySelector('button');if(first){e.preventDefault();first.click()}}if(e.key==='ArrowDown'){e.preventDefault();suggestions.querySelector('button')?.focus()}if(e.key==='Escape')suggestions.replaceChildren()};
+ search.parentElement.addEventListener('focusout',e=>{if(e.relatedTarget&&!e.currentTarget.contains(e.relatedTarget))suggestions.replaceChildren()});
 
+ $('app').onpointerdown=e=>{if(!search.parentElement.contains(e.target))suggestions.replaceChildren()};
  $('period').value=filters.period;$('cut').value=filters.cut;$('universeCap').value=filters.cap;
  function read(){
   const preset=$('period').value,custom=preset==='Custom';
@@ -71,11 +72,24 @@ function market(){
   if(!from||!to||from>to||to>today){status.textContent='Select a valid range ending today or earlier.';return}
 
   try{
+   if(selected&&!broker){
+    const [symbol,,category,code,isin]=selected,ticker=code||'AMFI:'+isin;
+    status.textContent='Loading '+symbol+' daily history…';
+    try{
+     const res=await fyersRequest('stockSessions',{ticker,from,to});
+     if(!active())return;
+     if(!res.bars.length&&code)return await scan(true);
+     let prev=res.prev;
+     const rows=res.bars.map(([date,open,close])=>{const item=bar(date,open,close,prev);prev=close;return item});
+     leaderboard=rows.length?[{s:symbol,category,ticker,source:res.source,rows,...score(rows,filters.cut),...aggregate(rows)}]:[];
+     status.textContent=symbol+' · '+rows.length+' trading sessions · '+from+' — '+to;
+     renderRankings();return;
+    }catch(err){if(!active())return;if(code)return await scan(true);throw err}
+   }
    if(!broker){
     status.textContent='Ranking stored sessions…';
     const result=await fyersRequest('archiveRank',{from,to,cap,query,cut:filters.cut==='All'?1:parseInt(filters.cut),limit:filters.limit});
     if(!active())return;
-    if(selected&&result.pending&&!result.withData)return await scan(true);
     leaderboard=result.stocks.map(stock=>{
      let prev=stock.prev==null?null:stock.prev/100;
      const rows=stock.bars.map(([d,o,c])=>{const b=bar(d,o/100,c/100,prev);prev=c/100;return b});
@@ -141,7 +155,7 @@ function market(){
    renderRankings();
   }catch(err){if(active())status.textContent=err.message+' Select the stock or group again to retry.'}
  }
- $('universeCap').onchange=()=>{selected=null;search.value='';suggestions.replaceChildren();scan()};
+ $('universeCap').onchange=()=>{selected=null;search.value='';marketTab='Rankings';suggestions.replaceChildren();scan()};
  for(const id of ['period','mf','mt','cut','topN'])$(id).addEventListener('change',()=>scan());
  scan();
 }

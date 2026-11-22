@@ -28,6 +28,35 @@ Deno.serve(async req=>{
     const {data:{user}}=await db.auth.getUser(bearer);
     if(!user?.email_confirmed_at||user.email?.toLowerCase()!=="webdata6432@gmail.com")return reply({error:"Owner access required"},403);
     const body=await req.json(),table=db.from("fyers_connections"),uid=user.id;
+    if(body.action==="stockSessions"){
+      const {ticker,from,to}=body;
+      const valid=(v:unknown)=>typeof v==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(v)&&Number.isFinite(Date.parse(v));
+      if(typeof ticker!=="string"||ticker.length>90||!valid(from)||!valid(to)||from>to||from<"2000-01-01"||to>new Date(Date.now()+19800000).toISOString().slice(0,10))return reply({error:"Check the instrument and dates"},400);
+      const {data:stock,error}=await db.from("daily_directory").select("instrument,symbol,stage,anchor,checked,desired,unverifiable").eq("ticker",ticker).eq("active",true).maybeSingle();
+      if(error)throw error;
+      if(!stock)return reply({error:"Stock missing from the archive directory"},404);
+      const day=86400000,ready=!stock.unverifiable&&stock.stage>0&&stock.checked>=(to<stock.desired?to:stock.desired)&&(stock.stage===3||Date.parse(from)>=Date.parse(stock.anchor)-(stock.stage*3650-1)*day);
+      if(ready){
+        const {data:years,error}=await db.from("daily_prices").select("days,opens,closes").eq("ticker",ticker).gte("yr",Number(from.slice(0,4))-1).lte("yr",Number(to.slice(0,4))).order("yr");
+        if(error)throw error;
+        const bars=[];let prev=null;
+        for(const y of years||[])for(const [i,d] of y.days.entries()){
+          if(d<from)prev=y.closes[i]/100;else if(d<=to)bars.push([d,y.opens[i]/100,y.closes[i]/100]);
+        }
+        if(bars.length)return reply({bars,prev,source:"Supabase daily history"});
+      }
+      const values=new Map<string,number[]>();
+      for(let start=Math.max(Date.parse("2000-01-01"),Date.parse(from)-14*day);start<=Date.parse(to);start+=3650*day){
+        const lo=new Date(start).toISOString().slice(0,10),hi=new Date(Math.min(start+3649*day,Date.parse(to))).toISOString().slice(0,10);
+        const res=await fetch("https://api.upstox.com/v3/historical-candle/"+encodeURIComponent(stock.instrument)+"/days/1/"+hi+"/"+lo,{signal:AbortSignal.timeout(12000)});
+        const json=await res.json();
+        if(!res.ok||!Array.isArray(json.data?.candles))return reply({error:"Daily history provider unavailable"},502);
+        for(const [stamp,o,,,c] of json.data.candles){const d=stamp.slice(0,10);if(d>=lo&&d<=hi&&o>0&&c>0)values.set(d,[o,c])}
+      }
+      const bars=[];let prev=null;
+      for(const d of [...values.keys()].sort()){const [o,c]=values.get(d)!;if(d<from)prev=c;else bars.push([d,o,c])}
+      return reply({bars,prev,source:"Upstox daily history"});
+    }
     const {data:row,error}=await table.select("*").eq("user_id",uid).maybeSingle();
     if(error)throw error;
     if(body.action==="archiveRank"){
