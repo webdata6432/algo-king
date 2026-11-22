@@ -85,16 +85,16 @@ function builderPage(){
  get('symbol').parentElement.addEventListener('focusout',e=>{if(!e.currentTarget.contains(e.relatedTarget))get('names').replaceChildren()});
 
  if(kind==='Options'){
-  el.classList.add('numberedLeg');
-  const wrap=document.createElement('div');wrap.className='legSteps';el.append(wrap);
+  el.classList.add('optionLeg');
   const label=k=>get(k).closest('label');
-  const steps=[
-   ['Index',[label('symbol'),quoteHost]],['Lots and lot quantity',[label('lots'),label('units')]],['Entry and exit · IST',[label('et'),label('xt')]],
-   ['Expiry',[label('expiry')]],['Call / Put',[label('cp')]],['Contract selection',[label('basis')]],['Selection value',[label('money'),label('strike')]],
-   ['Action',[label('side')]],['Target',[get('tp').closest('.riskPair')]],['Stop loss',[get('sl').closest('.riskPair')]],['Trailing SL',[pencil]],['Charges',[chargeButton]]
-  ];
-  steps.forEach(([title,items],i)=>{const box=document.createElement('fieldset'),legend=document.createElement('legend');legend.textContent=(i+1)+'. '+title;box.append(legend,...items);wrap.append(box)});
+  const top=document.createElement('div'),bottom=document.createElement('div'),value=document.createElement('div');
+  top.className='optionRow optionDetails';bottom.className='optionRow optionRisk';
+  value.append(label('money'),label('strike'));
+  top.append(...['symbol','lots','units','et','xt','expiry','cp'].map(label));
+  bottom.append(label('basis'),value,label('side'),get('tp').closest('.riskPair'),get('sl').closest('.riskPair'),pencil,chargeButton);
   for(const field of el.querySelectorAll(':scope > .fields'))field.hidden=true;
+  el.append(top,bottom,quoteHost);
+
  }
  get('symbol').oninput=suggest;
  el.config=()=>{const q=get('symbol').value.trim().toUpperCase(),src=available().find(x=>x.title.toUpperCase()===q)||available().find(x=>x.s===q);
@@ -109,10 +109,17 @@ function builderPage(){
  let currentMode='Options';
  $('strategyMode').onchange=()=>{const mode=$('strategyMode').value;if(mode===currentMode)return;syncDelivery(mode);if(mode==='Basket'&&currentMode==='Stock'){currentMode=mode;return}currentMode=mode;legs.replaceChildren();add(mode==='Options'?'Options':'Equity')};
  $('addLeg').onclick=()=>{if(currentMode==='Options'){add('Options');return}$('strategyMode').value='Basket';$('strategyMode').dispatchEvent(new Event('change'));add('Equity')};
+ const savedDays={options:'',stock:'1'};let activeDays;
  function syncDelivery(mode){
   const delivery=$('holding').value==='Delivery',options=mode==='Options';
   $('deliveryBasis').value=options?'Sessions before expiry':'Sessions after entry';
-  $('deliveryN').value=options?2:1;$('deliveryN').readOnly=options;
+  const days=$('deliveryN'),group=options?'options':'stock';
+  if(activeDays!==group){
+   if(activeDays)savedDays[activeDays]=days.value;
+   days.value=savedDays[group];activeDays=group;
+  }
+  days.parentElement.firstChild.textContent=options?'Days before expiry':'Sessions after entry';
+  days.min=options?'0':'1';days.required=true;days.placeholder=options?'Days before expiry':'Sessions after entry';
   for(const id of ['algoStart','algoEnd','deliveryBasis','deliveryN','deliveryTime']){
    const hide=id.startsWith('algo')?delivery:!delivery;
    $(id).parentElement.hidden=hide;$(id).disabled=hide||id==='deliveryBasis';
@@ -125,6 +132,7 @@ function builderPage(){
  if(common.holding==='Intraday'){const start=toMin($('algoStart').value),end=toMin($('algoEnd').value);if(start>=end)throw Error('Algo exit must follow algo entry.');for(const {p} of configs){p.entry=Math.max(p.entry,start);p.exit=Math.min(p.exit,end);if(p.entry>=p.exit)throw Error('Leg times must overlap the algo window.')}}
  if(common.holding==='Positional'){
   common.holdDays=+$('deliveryN').value;common.beforeExpiry=$('deliveryBasis').value==='Sessions before expiry';common.deliveryExit=toMin($('deliveryTime').value);
+  if($('deliveryN').value===''||!Number.isInteger(common.holdDays)||common.holdDays<0)throw Error('Enter a whole number of trading sessions.');
   if(common.beforeExpiry&&configs.some(c=>c.p.mode!=='Options'))throw Error('Days before expiry applies to option contracts.');
   if(!common.beforeExpiry&&common.holdDays<1)throw Error('Enter at least one session after entry.');
   for(const c of configs)c.p.exit=Math.min(c.p.exit,common.deliveryExit);

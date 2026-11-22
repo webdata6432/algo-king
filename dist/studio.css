@@ -77,11 +77,21 @@ header:has(.accountTools){width:100%;max-width:none;padding-right:clamp(8px,1vw,
 .dateDisplay input::-webkit-datetime-edit{opacity:0}
 .dateDisplay>span{position:absolute;pointer-events:none;inset-inline-start:12px;top:50%;transform:translateY(-50%);font-variant-numeric:tabular-nums}
 .dateDisplay:focus-within{outline:1px solid #5785e8;border-radius:6px}
-.legrow.numberedLeg{display:block}
-.legSteps{display:grid;gap:8px;margin-top:12px}
-.legSteps fieldset{margin:0;min-width:0;border:1px solid #384659;border-radius:8px;padding:9px 12px;display:flex;align-items:end;gap:12px;flex-wrap:wrap}
-.legSteps legend{color:#bcd0eb;padding:0 5px;font-weight:650}
-.legSteps fieldset>label{min-width:130px;flex:1}
-.legSteps fieldset .riskPair{width:min(100%,390px)}
-.legSteps .trailEdit[data-on=true]{background:#245bd2;color:white}
-.legSteps .trailEdit:not([data-on=true]){background:transparent}
+.legrow.optionLeg{display:block}
+.optionRow{display:grid;align-items:end;gap:8px;margin-top:10px;grid-template-columns:repeat(2,minmax(0,1fr))}
+.optionRow>*{min-width:0}
+.optionRow input,.optionRow select{min-width:0;max-width:100%}
+.optionRow .riskPair{grid-column:1/-1}
+.optionRow .trailEdit{margin:0;background:transparent;box-shadow:none}
+.optionRow .trailEdit[data-on=true]{background:#245bd2;border-color:#659cff;color:white}
+.optionDetails>label:first-child{grid-column:1/-1}
+.optionLeg .legEstimate:not(:empty){margin-top:8px}
+@media(min-width:720px) and (max-width:1099px){
+ .optionRow{grid-template-columns:repeat(4,minmax(0,1fr))}
+ .optionDetails>label:first-child,.optionRow .riskPair{grid-column:span 2}
+}
+@media(min-width:1100px){
+ .optionDetails{grid-template-columns:2fr .8fr .85fr 1fr 1fr 1.25fr .65fr}
+ .optionRisk{grid-template-columns:1.25fr 1fr .58fr 1.65fr 1.65fr auto auto}
+ .optionRow .riskPair,.optionRow label:has(.flipChoice),.optionDetails>label:first-child{grid-column:auto}
+}
