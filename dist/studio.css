@@ -65,3 +65,4 @@ header:has(.accountTools){width:100%;max-width:none;padding-right:clamp(8px,1vw,
  .legrow>.legRisk>label,.legrow>.legRisk>.riskPair{grid-column:auto}
  .legRisk>.trailEdit{margin:0}
 }
+.legEstimate:not(:empty){grid-column:1/-1;padding:10px 12px;border-left:3px solid #68cbb4;background:#172737;color:#e7f3ff;font-variant-numeric:tabular-nums}.legEstimate:empty{display:none}

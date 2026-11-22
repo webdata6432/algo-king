@@ -21,19 +21,43 @@ function builderPage(){
    function paint(){button.textContent=control.value;button.dataset.negative=String(control.selectedIndex===1);button.setAttribute('aria-label',control.value+' · switch to '+control.options[1-control.selectedIndex].text)}
    button.onclick=e=>{e.preventDefault();control.selectedIndex=1-control.selectedIndex;control.dispatchEvent(new Event('change',{bubbles:true}))};control.addEventListener('change',paint);paint();
  }
- const quoteHost=document.createElement('small');get('symbol').parentElement.append(quoteHost);
+ const quoteHost=document.createElement('div');quoteHost.className='legEstimate';quoteHost.setAttribute('aria-live','polite');el.querySelector('.legRisk').before(quoteHost);
+ let lastQuote=null;
+ function paintEstimate(){
+  if(!lastQuote)return;
+  const qty=Number(get('lots').value)*Number(get('units').value);
+  quoteHost.firstChild.textContent=lastQuote.label+' ₹'+fmt(lastQuote.price)+' · '+lastQuote.stamp+'  |  Estimated capital '+(qty>0?'₹'+fmt(lastQuote.price*qty)+' ('+qty+' units)':'—');
+ }
+ for(const key of ['lots','units'])get(key).addEventListener('input',paintEstimate);
  function showLegQuote(x){
-  quoteHost.replaceChildren();
-  if(!x.id?.startsWith('market:'))return;
-  const node=document.createElement('span');quoteHost.append(node);node.textContent='Checking latest quote…';
-  pollWhile(node,30000,()=>stockQuotes([x.s]),quotes=>{
-   const q=quotes[0];node.textContent=q?'FYERS · '+fmt(q.price)+' · '+quoteTime(q.time):'Latest quote unavailable';
-  },err=>node.textContent=err.message);
+  lastQuote=null;const marker=document.createElement('span');quoteHost.replaceChildren(marker);
+  if(!x.id?.startsWith('market:')){
+   const bar=x.data?.rows?.at(-1);
+   if(bar?.c>0){lastQuote={price:bar.c,label:'Imported close',stamp:bar.d};paintEstimate()}
+   else marker.textContent='Imported price unavailable';
+   return;
+  }
+  marker.textContent='Fetching latest price…';
+  async function readPrice(){
+   const q=(await stockQuotes([x.s]).catch(()=>[]))[0];
+   if(q?.price>0)return {price:q.price,label:'Latest price',stamp:'FYERS · '+(q.time?quoteTime(q.time):'Time unavailable')};
+   const url=authOrigin+'/functions/v1/market-minute?mode=quote&symbol='+encodeURIComponent(x.s);
+   const fallback=await fetch(url,{signal:AbortSignal.timeout(6000)}).then(r=>r.ok?r.json():null).catch(()=>null);
+   if(fallback?.price>0)return {price:fallback.price,label:'Latest price',stamp:(fallback.source||'Market quote')+' · '+(fallback.asOf||(fallback.time?quoteTime(fallback.time):'Time unavailable'))};
+   const to=new Date(Date.now()+19800000).toISOString().slice(0,10);
+   const res=await fyersRequest('archiveRank',{from:presetStart(to,'30D'),to,cap:kind==='Index'?'Indices':'All stocks',query:x.s,cut:1,limit:20});
+   const bar=res.stocks.find(item=>item.symbol===x.s)?.bars.at(-1);
+   if(!bar)throw Error('No price available');
+   return {price:bar[2]/100,label:'Last closing price',stamp:bar[0]};
+  }
+  pollWhile(marker,30000,readPrice,quote=>{
+   lastQuote=quote;paintEstimate();
+  },()=>{if(lastQuote){lastQuote.label='Last known price';paintEstimate()}else marker.textContent='Price unavailable · estimated capital unavailable'});
  }
  function available(){return sources.filter(x=>kind==='Index'?indices.includes(x.s):!indices.includes(x.s)&&!['Index','Option contract','Future'].includes(x.data?.kind))}
  get('rule').replaceChildren(...['Market price','Price above','Price below','Limit price'].map(v=>new Option(v,v)));
  ruleFields();
- function suggest(){quoteHost.replaceChildren();const input=get('symbol'),box=get('names'),norm=s=>s.toUpperCase().replace(/[^A-Z0-9]/g,''),q=norm(input.value);box.replaceChildren();if(!q)return;
+ function suggest(){lastQuote=null;quoteHost.replaceChildren();const input=get('symbol'),box=get('names'),norm=s=>s.toUpperCase().replace(/[^A-Z0-9]/g,''),q=norm(input.value);box.replaceChildren();if(!q)return;
  const options=available();
  const matches=options.filter(x=>norm(x.title).includes(q)||norm(x.s).includes(q)).sort((a,b)=>Number(norm(b.s)===q)-Number(norm(a.s)===q)||Number(b.id?.startsWith('market:')||false)-Number(a.id?.startsWith('market:')||false)).slice(0,20);
  for(const x of matches){const button=document.createElement('button');button.type='button';button.textContent=x.title;button.onclick=e=>{e.preventDefault();input.value=x.title;box.replaceChildren();showLegQuote(x)};box.append(button)}
