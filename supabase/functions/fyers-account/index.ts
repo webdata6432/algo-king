@@ -61,15 +61,46 @@ Deno.serve(async req=>{
       if(saved.error||!saved.data)throw Error();
       return reply({connected:true});
     }
+    if(body.action==="dailyScan"){
+      if(!cfg.token)return reply({error:"Connect FYERS before scanning."},409);
+      const {tickers,from,to}=body;
+      const valid=(d:string)=>typeof d==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(d)&&Number.isFinite(Date.parse(d))&&new Date(d).toISOString().slice(0,10)===d;
+      if(!Array.isArray(tickers)||!tickers.length||tickers.length>8||!tickers.every(t=>typeof t==="string"&&/^(NSE|BSE):[A-Z0-9&._ -]{1,65}$/.test(t))||!valid(from)||!valid(to)||from>to||Date.parse(to)-Date.parse(from)>349*86400000)return reply({error:"Invalid scan range or instruments."},400);
+      const rows:Record<string,number[][]>={},unavailable:string[]=[];
+      const since=new Date(Date.parse(from)-12*86400000).toISOString().slice(0,10);
+      const ist=new Date(Date.now()+19800000),today=ist.toISOString().slice(0,10);
+      for(let i=0;i<tickers.length;i+=2){
+        await Promise.all(tickers.slice(i,i+2).map(async ticker=>{
+          const params=new URLSearchParams({symbol:ticker,resolution:"D",date_format:"1",range_from:since,range_to:to,cont_flag:"1"});
+          const res=await fetch("https://api-t1.fyers.in/data/history?"+params,{headers:{Authorization:cfg.id+":"+cfg.token},signal:AbortSignal.timeout(16000)});
+          const data=await res.json();
+          if(res.status===429||data.code===429)throw Error("RATE");
+          if(res.status===401||[-8,-15,-16,-17].includes(data.code))throw Error("AUTH");
+          if(data.s==="no_data"){rows[ticker]=[];return}
+          if(data.code===-300){unavailable.push(ticker);return}
+          if(!res.ok||data.s!=="ok"||!Array.isArray(data.candles))throw Error("HISTORY");
+          const bars:number[][]=[];let prev=0;
+          for(const [t,o,,,c] of data.candles.sort((a:number[],b:number[])=>a[0]-b[0])){
+            if(!Number.isFinite(t)||!(o>0&&c>0))continue;
+            const day=new Date(t*1000+19800000).toISOString().slice(0,10);
+            if(day>=from&&day<=to&&day<=today&&(day!==today||ist.getUTCHours()*60+ist.getUTCMinutes()>=930))bars.push([t,o,c,prev]);
+            prev=c;
+          }
+          rows[ticker]=bars;
+        }));
+        if(i+2<tickers.length)await new Promise(resolve=>setTimeout(resolve,650));
+      }
+      return reply({rows,unavailable});
+    }
     if((body.action==="stockQuotes"||body.action==="depth")&&cfg.token){
       const symbols=body.symbols;
       const indices:Record<string,string>={"NIFTY 50":"NSE:NIFTY50-INDEX",SENSEX:"BSE:SENSEX-INDEX",BANKNIFTY:"NSE:NIFTYBANK-INDEX","NIFTY MIDCAP 100":"NSE:NIFTYMIDCAP100-INDEX"};
       const aliases:Record<string,string>={GMRINFRA:"GMRAIRPORT",BIRLASOFT:"BSOFT"};
       const depth=body.action==="depth";
-      if(!Array.isArray(symbols)||!symbols.length||symbols.length>(depth?1:50)||!symbols.every(s=>typeof s==="string"&&(/^[A-Z0-9&-]{1,32}$/.test(s)||Object.hasOwn(indices,s))))return reply({error:"Choose a valid instrument"},400);
+      if(!Array.isArray(symbols)||!symbols.length||symbols.length>(depth?1:50)||!symbols.every(s=>typeof s==="string"&&(/^[A-Z0-9&-]{1,32}$/.test(s)||Object.hasOwn(indices,s)||(!depth&&/^(BSE|NSE):[A-Z0-9&._ -]{1,65}$/.test(s)))))return reply({error:"Choose a valid instrument"},400);
       const instruments=new Map<string,string>();
       for(const s of symbols){
-        const ticker=indices[s]||"NSE:"+(aliases[s]||s)+(s==="HFCL"?"-BE":"-EQ");
+        const ticker=s.includes(":")?s:indices[s]||"NSE:"+(aliases[s]||s)+(s==="HFCL"?"-BE":"-EQ");
         instruments.set(ticker,s);
       }
       const tickers=[...instruments.keys()].join(",");
@@ -112,5 +143,10 @@ Deno.serve(async req=>{
     if(!res.ok||q.s!=="ok")return reply({error:"FYERS quotes unavailable. Reconnect if your session expired."},409);
     const quotes=(q.d||[]).filter((x:any)=>x.s==="ok"&&x.v?.lp>0).map((x:any)=>({name:x.n==="NSE:NIFTY50-INDEX"?"NIFTY":"SENSEX",price:x.v.lp,prev:x.v.prev_close_price,time:Number(x.v.tt||0)*1000,source:"FYERS",unit:"pts"}));
     return reply({quotes});
-  }catch{return reply({error:"FYERS connection request failed. Please retry."},502)}
+  }catch(err){
+    const reason=err instanceof Error?err.message:"";
+    if(reason==="RATE")return reply({error:"FYERS rate limit. Retry after a minute."},429);
+    if(reason==="AUTH")return reply({error:"FYERS session expired. Reconnect FYERS and retry."},401);
+    return reply({error:"FYERS connection request failed. Please retry."},502);
+  }
 });

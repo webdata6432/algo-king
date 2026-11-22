@@ -12,31 +12,92 @@ function aggregate(rows){
  }
  return {base,points:last.c-base,actual:100*(last.c/base-1),peakReturn:100*(peak/base-1),drawdown};
 }
+const marketIndices=[
+ ['NIFTY 50','Nifty 50','Index','NSE:NIFTY50-INDEX'],['SENSEX','Sensex','Index','BSE:SENSEX-INDEX'],
+ ['BANKNIFTY','Nifty Bank','Index','NSE:NIFTYBANK-INDEX'],['NIFTY MIDCAP 100','Nifty Midcap 100','Index','NSE:NIFTYMIDCAP100-INDEX']
+];
+let capDirectory,scanCache;
+const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 function market(){
- $('app').innerHTML=heading('Market returns','Intraday momentum','Rank instruments by the number of sessions with a qualifying open-to-close move.',importButton)+'<section class="panel"><h2>Dates</h2><div class="fields">'+select('Date range','period',presetNames)+input('From','mf',filters.from,'date')+input('Through','mt',filters.to,'date')+select('Absolute move ≥','cut',['1%','2%','3%','5%','All'])+'</div></section><section class="panel"><h2>Stock filters</h2><div class="fields">'+input('Search','query',filters.query,'search','placeholder="Name or symbol"')+input('Show top','topN',filters.limit,'number','min="1" max="999"')+'</div><div class="fields">'+select('Stock group','universeCap',['All stocks',...caps,'Indices'])+'</div><p class="hint">All shows every threshold, ranked by ≥1% sessions. Ties use ≥5%, ≥3%, ≥2% hits, then symbol. Cap groups are sample watchlists. '+esc(exchangeStatus)+'</p><div id="rank"></div></section>';
+ const today=new Date(Date.now()+19800000).toISOString().slice(0,10);
+ $('app').innerHTML=heading('Market returns','Intraday momentum','Scan completed FYERS daily candles for the selected period.')+
+ '<section class="panel"><h2>Dates</h2><div class="fields">'+select('Date range','period',presetNames)+input('From','mf',filters.from,'date')+input('Through','mt',filters.to,'date')+select('Absolute move ≥','cut',['1%','2%','3%','5%','All'])+'</div></section>'+
+ '<section class="panel"><h2>Stock filters</h2><div class="fields">'+input('Search','query',filters.query,'search','placeholder="Name or symbol"')+input('Show top','topN',filters.limit,'number','min="1" step="1"')+'</div><div class="fields">'+select('Stock group','universeCap',['All stocks',...caps,'Indices'])+'</div><button class="primary" id="scan">Scan stocks</button><p id="scanStatus" role="status"></p><div id="rank"></div></section>';
+ const host=$('rank'),status=$('scanStatus'),button=$('scan');
+ let version=0;
  $('period').value=filters.period;$('cut').value=filters.cut;$('universeCap').value=filters.cap;
- let revision=0;const host=$('rank');
- async function render(){const ticket=++revision;Object.assign(filters,{period:$('period').value,to:$('mt').value,cap:$('universeCap').value,cut:$('cut').value,limit:Math.max(1,Math.floor(+$('topN').value||1)),query:$('query').value});
- if(!filters.to||!$('mf').value)return;if(filters.period!=='Custom')$('mf').value=presetStart(filters.to,filters.period);
- filters.from=$('mf').value;$('mf').disabled=$('mt').disabled=filters.period!=='Custom';
- const indexList=['NIFTY 50','SENSEX','BANKNIFTY','NIFTY MIDCAP 100'];
- const stocks=[...groups.flat(),...imports.filter(x=>x.kind==='Equity').map(x=>x.s)];
- let syms=filters.query.trim()?[...stocks,...indexList]:filters.cap==='Indices'?indexList:caps.includes(filters.cap)?groups[caps.indexOf(filters.cap)]:stocks;
- syms=[...new Set(syms)].filter(s=>s.includes(filters.query.trim().toUpperCase()));
- if(filters.from>filters.to){host.textContent='Choose an end date on or after the start date.';return}
- if(dailyStart&&filters.from<dailyStart){
-  host.textContent='Loading earlier daily sessions…';
-  try{await loadEarlierDays(syms.filter(s=>!imports.some(f=>f.s===s)),filters.from,filters.to)}
-  catch{if(ticket===revision&&host.isConnected)host.textContent='Earlier history could not be loaded. Retry or narrow the date range.';return}
-  if(ticket!==revision||!host.isConnected)return;
+ function read(){
+  const preset=$('period').value,custom=preset==='Custom';
+  if(!custom){$('mt').value=today;$('mf').value=presetStart(today,preset)}
+  $('mt').disabled=$('mf').disabled=!custom;
+  Object.assign(filters,{period:preset,from:$('mf').value,to:$('mt').value,cap:$('universeCap').value,query:$('query').value.trim(),cut:$('cut').value,limit:Math.max(1,Math.floor(+$('topN').value||1))});
  }
- leaderboard=[...new Set(syms)].filter(s=>s.includes(filters.query.trim().toUpperCase())).flatMap(s=>{let file=imports.filter(x=>x.s===s).at(-1),rows=(file?dailyBars(file.rows):(exchangeDaily[s]||(s==='SENSEX'?db.SENSEX:[]))).filter(r=>r.d>=filters.from&&r.d<=filters.to);return rows.length?[{s,rows,source:file?'CSV · '+file.src:'Exchange daily history',...score(rows,filters.cut),...aggregate(rows)}]:[]}).sort((a,b)=>b.score-a.score||b.hits[3]-a.hits[3]||b.hits[2]-a.hits[2]||b.hits[1]-a.hits[1]||a.s.localeCompare(b.s)).filter(x=>filters.query.trim()||filters.cap==='Indices'||x.score>0).slice(0,filters.query.trim()||filters.cap==='Indices'?Infinity:filters.limit);
- renderRankings()}
- $('universeCap').addEventListener('change',()=>{$('query').value=''});
- ['period','mf','mt','query','cut','topN','universeCap'].forEach(id=>$(id).addEventListener(['query','topN'].includes(id)?'input':'change',render));render()}
-function inspectRank(i){let x=leaderboard[i],rs=x.rows,base=x.base,rows=rs.map(r=>({...r,cumulative:100*(r.c/base-1),tip:r.d+'\nOpen '+fmt(r.o)+' · Close '+fmt(r.c)+'\nIntraday '+signed(r.i)+'% · Actual '+(r.a==null?'—':signed(r.a)+'%')})),headers=['Session','Open','Close','Points','Intraday %','Actual %','Cumulative actual %',...levels.map(n=>'≥'+n+'%')];modal(x.s+' · Session detail','<p class="hint" id="latestMarketQuote">Checking latest market quote…</p>'+note(esc(x.source)+' · '+rs[0].d+' — '+rs.at(-1).d+' · '+rs.length+' sessions')+metrics([['Period incl. gaps',pct(x.actual)],['Peak return',pct(x.peakReturn)],['Max drawdown',pct(x.drawdown)],['Change in points',signed(x.points)],['Last session · '+rs.at(-1).d,pct(rs.at(-1).i)]])+'<h3>Daily open-to-close move</h3>'+plot(rows.map(r=>({...r,tip:r.d+' · '+signed(r.i)+'%'})),'i','#42d995',true)+'<h3>Cumulative actual return</h3>'+plot(rows.map(r=>({...r,tip:r.d+' · '+signed(r.cumulative)+'%'})),'cumulative','#4fe3ac')+'<div class="row"><h3>Historical candles</h3><button id="historyCSV">Export CSV</button></div>'+table(headers,rows.map(r=>[r.d,fmt(r.o),fmt(r.c),signed(r.c-r.o),pct(r.i),pct(r.a),pct(r.cumulative),...levels.map(n=>Math.abs(r.i)>=n?'✓':'—')])));trackMarketQuote(x.s,$('latestMarketQuote'));$('historyCSV').onclick=()=>csv(x.s+'-history',[headers,...rows.map(r=>[r.d,r.o,r.c,r.c-r.o,r.i,r.a,r.cumulative,...levels.map(n=>Math.abs(r.i)>=n)])])}
+ function changed(){version++;read();host.replaceChildren();button.disabled=false;status.textContent='Select Scan stocks to rank this group.'}
+ async function scan(){
+  read();const v=++version,active=()=>v===version&&host.isConnected;
+  const {from,to,query,cap}=filters;
+  host.replaceChildren();
+  if(!from||!to||from>to||to>today){status.textContent='Select a valid range ending today or earlier.';return}
+  button.disabled=true;
+  try{
+   if(!capDirectory){
+    const response=await fetch('market/caps.json');if(!response.ok)throw Error('Cap directory unavailable.');
+    capDirectory=await response.json();
+   }
+   if(!active())return;
+   const q=query.toUpperCase(),list=(q?[...capDirectory.companies,...marketIndices]:cap==='Indices'?marketIndices:capDirectory.companies)
+    .filter(([s,n,c])=>q?(s+' '+n).toUpperCase().includes(q):cap==='All stocks'||cap==='Indices'||c===cap);
+   const range=from+'|'+to;
+   if(scanCache?.range!==range)scanCache={range,bars:new Map()};
+   const cache=scanCache.bars;
+   const tickers=[...new Set(list.map(i=>i[3]).filter(Boolean))],missing=tickers.filter(t=>!cache.has(t));
+   const day=86400000;
+   for(let i=0;i<missing.length;i+=8){
+    if(!active())return;
+    status.textContent='FYERS · '+(tickers.length-missing.length+i)+' / '+tickers.length+' instruments checked. Ranking after the full scan.';
+    const batch=missing.slice(i,i+8),series=new Map(batch.map(t=>[t,[]]));
+    for(let start=Date.parse(from);start<=Date.parse(to);start+=350*day){
+     if(!active())return;
+     const args={tickers:batch,from:new Date(start).toISOString().slice(0,10),to:new Date(Math.min(Date.parse(to),start+349*day)).toISOString().slice(0,10)};
+     let data;
+     for(let attempt=0;;attempt++){
+      try{data=await fyersRequest('dailyScan',args);break}
+      catch(err){if(attempt>=2||!String(err.message).includes('rate limit'))throw err;
+       status.textContent='FYERS rate limit · resuming in one minute.';await delay(61000);if(!active())return}
+     }
+     for(const t of batch){
+      if(data.unavailable.includes(t)){series.set(t,null);continue}
+      const a=series.get(t);if(a)for(const r of data.rows[t])a.push(r);
+     }
+    }
+    for(const [t,a] of series)cache.set(t,a);
+    if(i+8<missing.length)await delay(500);
+   }
+   if(!active())return;
+   const matches=[];let noData=0,unmapped=0;
+   const candles=raw=>raw.map(([t,o,c,p])=>bar(new Date(t*1000+19800000).toISOString().slice(0,10),o,c,p));
+   for(const [s,,category,ticker] of list){
+    const raw=cache.get(ticker);
+    if(!ticker||raw===null){unmapped++;continue}
+    if(!raw?.length){noData++;continue}
+    const rows=candles(raw);
+    const stats=score(rows,filters.cut);
+    if(stats.score||q||cap==='Indices')matches.push({s,category,ticker,source:'FYERS daily',...stats,...aggregate(rows)});
+   }
+   matches.sort((a,b)=>b.score-a.score||b.hits[3]-a.hits[3]||b.hits[2]-a.hits[2]||b.hits[1]-a.hits[1]||a.s.localeCompare(b.s));
+   leaderboard=(q||cap==='Indices'?matches:matches.slice(0,filters.limit)).map(x=>({...x,rows:candles(cache.get(x.ticker))}));
+   status.textContent=list.length+' in group · '+(list.length-unmapped-noData)+' with candles · '+matches.length+' matching · '+leaderboard.length+' shown · '+noData+' with no sessions · '+unmapped+' unavailable. Current AMFI classification.';
+   renderRankings();
+  }catch(err){if(active())status.textContent=err.message+' Scan again to resume this range.'}
+  finally{if(active())button.disabled=false}
+ }
+ $('universeCap').onchange=()=>{$('query').value='';changed()};
+ for(const id of ['period','mf','mt','query'])$(id).addEventListener(id==='query'?'input':'change',changed);
+ for(const id of ['cut','topN'])$(id).onchange=()=>{if(host.children.length)scan();else changed()};
+ button.onclick=scan;changed();
+}
+function inspectRank(i){let x=leaderboard[i],rs=x.rows,base=x.base,rows=rs.map(r=>({...r,cumulative:100*(r.c/base-1),tip:r.d+'\nOpen '+fmt(r.o)+' · Close '+fmt(r.c)+'\nIntraday '+signed(r.i)+'% · Actual '+(r.a==null?'—':signed(r.a)+'%')})),headers=['Session','Open','Close','Points','Intraday %','Actual %','Cumulative actual %',...levels.map(n=>'≥'+n+'%')];modal(x.s+' · Session detail','<p class="hint" id="latestMarketQuote">Checking latest market quote…</p>'+note(esc(x.source)+' · '+rs[0].d+' — '+rs.at(-1).d+' · '+rs.length+' sessions')+metrics([['Period incl. gaps',pct(x.actual)],['Peak return',pct(x.peakReturn)],['Max drawdown',pct(x.drawdown)],['Change in points',signed(x.points)],['Last session · '+rs.at(-1).d,pct(rs.at(-1).i)]])+'<h3>Daily open-to-close move</h3>'+plot(rows.map(r=>({...r,tip:r.d+' · '+signed(r.i)+'%'})),'i','#42d995',true)+'<h3>Cumulative actual return</h3>'+plot(rows.map(r=>({...r,tip:r.d+' · '+signed(r.cumulative)+'%'})),'cumulative','#4fe3ac')+'<div class="row"><h3>Historical candles</h3><button id="historyCSV">Export CSV</button></div>'+table(headers,rows.map(r=>[r.d,fmt(r.o),fmt(r.c),signed(r.c-r.o),pct(r.i),pct(r.a),pct(r.cumulative),...levels.map(n=>Math.abs(r.i)>=n?'✓':'—')])));trackMarketQuote(x.s,$('latestMarketQuote'),x.ticker);$('historyCSV').onclick=()=>csv(x.s+'-history',[headers,...rows.map(r=>[r.d,r.o,r.c,r.c-r.o,r.i,r.a,r.cumulative,...levels.map(n=>Math.abs(r.i)>=n)])])}
 let marketTab='Rankings',reportSymbol='',direction='Both';
-function stockGroup(s){return caps[groups.findIndex(g=>g.includes(s))]||(indices.includes(s)?'Index':'Imported')}
 function renderRankings(){
  const root=$('rank');root.innerHTML='<div class="viewtabs">'+['Rankings','Daily report'].map(n=>'<button class="'+(marketTab===n?'selected':'')+'">'+n+'</button>').join('')+'</div><div id="rankBody"></div>';
  root.querySelectorAll('.viewtabs button').forEach(b=>b.onclick=()=>{marketTab=b.textContent;renderRankings()});
@@ -52,16 +113,16 @@ function renderRankings(){
  }
 
  let cols=['Rank · Stock','Group','Hit days','Hit rate','Avg |move|','Max up','Max down','Latest date','Change ₹ / pts','Open → close %','Incl. gap %',...(filters.cut==='All'?levels.map(n=>'≥'+n+'% hits'):[]),'Period incl. gaps','Peak return','Max drawdown'];
- let rows=leaderboard.map(x=>{let r=x.rows.at(-1),moves=x.rows.map(r=>r.i);return [x.s,stockGroup(x.s),x.score+'/'+moves.length,100*x.score/moves.length,mean(moves.map(Math.abs)),Math.max(0,...moves),Math.min(0,...moves),r.d,r.c-r.o,r.i,r.a,...(filters.cut==='All'?x.hits:[]),x.actual,x.peakReturn,x.drawdown]});
+ let rows=leaderboard.map(x=>{let r=x.rows.at(-1),moves=x.rows.map(r=>r.i);return [x.s,x.category,x.score+'/'+moves.length,100*x.score/moves.length,mean(moves.map(Math.abs)),Math.max(0,...moves),Math.min(0,...moves),r.d,r.c-r.o,r.i,r.a,...(filters.cut==='All'?x.hits:[]),x.actual,x.peakReturn,x.drawdown]});
  body.innerHTML='<div class="row"><p class="hint">Peak return uses the highest close above the starting baseline (previous close, or first open if unavailable). Max drawdown is the largest closing fall from a peak within these dates.</p><button id="rankCSV">Export rankings</button></div>'+table(cols,rows.map((r,i)=>['<button onclick="inspectRank('+i+')">'+(i+1)+'. '+esc(r[0])+'</button>','<span class="capBadge">'+esc(r[1])+'</span>',r[2],'<span class="hitTrack"><i style="width:'+r[3]+'%"></i></span>'+fmt(r[3],1)+'%',fmt(r[4])+'%',pct(r[5]),pct(r[6]),r[7],'<span class="'+col(r[8])+'">'+signed(r[8])+'</span>',pct(r[9]),pct(r[10]),...r.slice(11,-3),...r.slice(-3).map(pct)]));
  $('rankCSV').onclick=()=>csv('momentum-rankings',[cols,...rows])
 }
 
-async function trackMarketQuote(symbol,node){
+async function trackMarketQuote(symbol,node,ticker){
  async function update(){
   if(!node.isConnected||!$('dlg').open)return;
   try{
-   let q;if(session)q=(await stockQuotes([symbol]).catch(()=>[]))[0];if(session&&!q?.price)q=await accountRequest('/functions/v1/angel-account',{action:'quote',symbol},session.access_token).catch(()=>null);
+   let q;if(session)q=(await stockQuotes([ticker||symbol]).catch(()=>[]))[0];if(!q?.price&&ticker?.startsWith('BSE:')&&symbol!=='SENSEX')throw Error();if(session&&!q?.price)q=await accountRequest('/functions/v1/angel-account',{action:'quote',symbol},session.access_token).catch(()=>null);
    if(!q?.price){const r=await fetch(authOrigin+'/functions/v1/market-minute?mode=quote&symbol='+encodeURIComponent(symbol));if(!r.ok)throw Error();q=await r.json()}
    const stamp=q.asOf||(q.time?new Date(q.time).toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})+' IST':'Time unavailable');
    const match=String(q.asOf||'').match(/^(\d{2})-([A-Za-z]{3})-(\d{4}) (\d{2}:\d{2}:\d{2})$/);const timestamp=q.time||(match?Date.parse(match[1]+' '+match[2]+' '+match[3]+' '+match[4]+' GMT+0530'):NaN);const age=Date.now()-timestamp;const quality=Number.isFinite(age)&&age>=0?(age<=1800000?'Within 30 min':'Last known · over 30 min'):'Timestamp unverified';
