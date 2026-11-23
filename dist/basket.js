@@ -1,10 +1,11 @@
 let legSequence=0;
 function builderPage(){
+ const editing=saved.find(s=>s.id===editingStrategyId);editingStrategyId=null;
  const rangeEnd=new Date(Date.now()+19800000).toISOString().slice(0,10);
  $('app').innerHTML=heading('Strategy studio','Backtester','Build a strategy from minute candles. Times are in IST.',importButton+' <button onclick="strategyLibrary()">Saved strategies</button>')+'<form id="strategy" class="panel"><div class="row">'+select('Strategy','strategyMode',['Options','Stock','Basket'])+'<button type="button" id="addLeg">＋ Add leg</button></div><div class="fields">'+select('Dates','bp',presetNames)+input('From','bf',presetStart(rangeEnd,'7D'),'date')+input('Through','bt',rangeEnd,'date')+'</div><div id="legs"></div><h3>Algo targets · all legs</h3><div class="fields">'+riskField('Total profit target','algoTarget','algoTU',0)+riskField('Total stop loss','algoStop','algoSU',0)+'</div><p class="hint">Checked at each minute open using combined gross P&amp;L. % uses entry value. Points sum the signed moves per leg. Zero is off.</p><h3>Daily transactions</h3><div class="fields">'+input('Transactions per day','maxEntries',1,'number','readonly')+'</div><h3>Algo expiry and exit</h3><div class="fields">'+ select('Trade type','holding',['Intraday','Delivery'])+select('Delivery exit','deliveryBasis',['Sessions after entry','Sessions before expiry'])+input('Trading sessions','deliveryN',1,'number','min="0" step="1"')+input('Delivery exit · IST','deliveryTime','15:15','time')+input('Algo entry from · IST','algoStart','09:15','time')+input('Algo exit by · IST','algoEnd','15:29','time')+input('Slippage · bps per fill','slip',0,'number','min="0" step="any"')+'</div><div class="row"><button class="primary">Run backtest</button></div><p role="status" id="runMessage"></p><details><summary>Execution rules</summary>Price above and below use the first qualifying minute open after the entry window starts. Limit orders fill at the limit or a better open. For a limit touched inside a candle, only an adverse stop can exit in that candle. Each strategy opens once per eligible day when every leg qualifies. All legs together count as one transaction. Automatic re-entry is off. Stops take priority inside an ambiguous candle. Gaps fill at the open. Incomplete candle windows skip the session. Delivery uses the selected session count and the earlier applicable exit time.</details></form><div id="results"></div>';
  const legs=$('legs'),sources=[...[...groups.flat(),'NIFTY 50','SENSEX','BANKNIFTY','NIFTY MIDCAP 100'].map(s=>({s,id:'market:'+s,title:s+' · Market minute candles'})),...testSources().filter(x=>!x.id.startsWith('demo:'))];
- fetch('market/shares.json').then(r=>r.json()).then(rows=>{const bySymbol=new Map(sources.filter(x=>x.id.startsWith('market:')).map(x=>[x.s,x]));for(const [s,name,key] of rows){let item=bySymbol.get(s);if(!item){item={s,id:'market:'+s};sources.push(item);bySymbol.set(s,item)}Object.assign(item,{title:s+' · '+name,key})}const active=document.activeElement;if(legs.contains(active)&&active.type==='search'&&!sources.some(s=>s.title===active.value))active.dispatchEvent(new Event('input'))}).catch(()=>{});
- function add(kind){
+ cachedRead('share-directory',3600000,async()=>{const r=await fetch('market/shares.json');if(!r.ok)throw Error('Stock directory unavailable');return r.json()}).then(rows=>{const bySymbol=new Map(sources.filter(x=>x.id.startsWith('market:')).map(x=>[x.s,x]));for(const [s,name,key] of rows){let item=bySymbol.get(s);if(!item){item={s,id:'market:'+s};sources.push(item);bySymbol.set(s,item)}Object.assign(item,{title:s+' · '+name,key})}const active=document.activeElement;if(legs.contains(active)&&active.type==='search'&&!sources.some(s=>s.title===active.value))active.dispatchEvent(new Event('input'))}).catch(()=>{});
+ function add(kind,restore){
  const n=++legSequence,el=document.createElement('section');el.className='legrow';
  const field=(label,key,value,type='number',attrs='min="0" step="any"')=>input(label,key+n,value,type,attrs);
  const choice=(label,key,items)=>select(label,key+n,items);
@@ -103,6 +104,18 @@ function builderPage(){
  if((p.trailX||p.trailY)&&!(p.trailX&&p.trailY&&p.stop))throw Error('Trailing requires a stop and positive X and Y values.');
  if(kind==='Options'){Object.assign(p,{cp:get('cp').value,optionExpiry:get('expiry').value,strikeMode:get('basis').value,money:get('money').value.split(' ').at(-1),steps:parseInt(get('money').value)||0,strikePrice:+get('strike').value,lots:+get('lots').value});return {p,rows:null}}
  return {p,rows:src.id.startsWith('market:')?null:src.data?.rows||(candleCache[src.id]??=demoBars(src.s))}};
+ const controls=[...el.querySelectorAll('input[id],select[id]')].filter(c=>c.id.endsWith(String(n)));
+ const fieldKey=c=>c.id.slice(0,-String(n).length);
+ el.snapshot=()=>({kind,fees:[...fees],trailX,trailY,fields:Object.fromEntries(controls.map(c=>[fieldKey(c),c.value]))});
+ if(restore){
+  fees=[...(restore.fees||fees)];trailX=restore.trailX||0;trailY=restore.trailY||0;
+  pencil.dataset.on=String(trailX>0);pencil.textContent='✎ Trailing SL · '+(trailX?trailX+' → '+trailY+' pts':'Off');
+  for(const c of controls){
+   const v=restore.fields[fieldKey(c)];if(v==null)continue;
+   if(fieldKey(c)==='expiry'&&![...c.options].some(o=>o.value===v))c.add(new Option(v,v));
+   c.value=v;if(c.tagName==='SELECT')c.dispatchEvent(new Event('change'));
+  }
+ }
  el.querySelector('button').onclick=()=>{el.remove();if(!legs.children.length)add($('strategyMode').value==='Options'?'Options':'Equity');renumber()};renumber();
  }
  function renumber(){[...legs.children].forEach((el,i)=>el.querySelector('h3').textContent='Leg '+(i+1))}
@@ -127,7 +140,25 @@ function builderPage(){
  }
  $('holding').onchange=()=>syncDelivery(currentMode);syncDelivery(currentMode);
  $('bp').onchange=()=>{let custom=$('bp').value==='Custom';$('bf').disabled=$('bt').disabled=!custom;if(!custom)$('bf').value=presetStart($('bt').value,$('bp').value)};$('bp').onchange();add('Options');
- $('strategy').onsubmit=async e=>{e.preventDefault();try{const configs=[...legs.children].map(l=>l.config());if(!Number.isInteger(+$('maxEntries').value)||+$('maxEntries').value!==1)throw Error('One strategy transaction is allowed per day.');
+ const commonKeys=['bp','bf','bt','algoTarget','algoTU','algoStop','algoSU','maxEntries','holding','deliveryN','deliveryTime','algoStart','algoEnd','slip'];
+ const definition=()=>({mode:currentMode,common:Object.fromEntries(commonKeys.map(k=>[k,$(k).value])),legs:[...legs.children].map(l=>l.snapshot())});
+ if(editing){
+  const draft=editing.definition||legacyDefinition(editing);
+  $('strategyMode').value=draft.mode;$('strategyMode').dispatchEvent(new Event('change'));
+  for(const k of commonKeys){if(draft.common[k]!=null){$(k).value=draft.common[k];if($(k).tagName==='SELECT')$(k).dispatchEvent(new Event('change'))}}
+  legs.replaceChildren();for(const leg of draft.legs)add(leg.kind,leg);
+  const area=document.createElement('section');area.className='panel';area.innerHTML=input('Strategy name','editName',editing.name,'text','maxlength="80"')+' <button type="button">Save settings</button><p role="status"></p>';
+  $('strategy').before(area);
+  area.querySelector('button').onclick=async()=>{
+   const msg=area.querySelector('p'),name=$('editName').value.trim();
+   try{if(!name)throw Error('Enter a strategy name.');if(!$('strategy').reportValidity())return;
+    for(const l of legs.children)l.config();
+    await storeStrategy({...saved.find(r=>r.id===editing.id),name,definition:definition(),pending:true});
+    msg.textContent='Settings saved. Run backtest to update the result.';
+   }catch(err){msg.textContent=err.message}
+  };
+ }
+ $('strategy').onsubmit=async e=>{e.preventDefault();try{const submitted=definition();const configs=[...legs.children].map(l=>l.config());if(!Number.isInteger(+$('maxEntries').value)||+$('maxEntries').value!==1)throw Error('One strategy transaction is allowed per day.');
  const common={from:$('bf').value,to:$('bt').value,holding:$('holding').value==='Delivery'?'Positional':'Intraday',slip:+$('slip').value};
  if(common.holding==='Intraday'){const start=toMin($('algoStart').value),end=toMin($('algoEnd').value);if(start>=end)throw Error('Algo exit must follow algo entry.');for(const {p} of configs){p.entry=Math.max(p.entry,start);p.exit=Math.min(p.exit,end);if(p.entry>=p.exit)throw Error('Leg times must overlap the algo window.')}}
  if(common.holding==='Positional'){
@@ -149,9 +180,7 @@ function builderPage(){
     const a=new Date(start).toISOString().slice(0,10),b=new Date(Math.min(Date.parse(to),start+(span-1)*86400000)).toISOString().slice(0,10);
     if(brokerIndex){const history=await fyersRequest('history',{symbol,from:a,to:b});rows.push(...history.rows);continue}
     const qs=new URLSearchParams({symbol,from:a,to:b,...(key?{contract:key}:{})});
-    const res=await fetch(authOrigin+'/functions/v1/market-minute?'+qs),data=await res.json();
-    if(!res.ok){if(key&&res.status===404)continue;throw Error(data.error||'Minute history unavailable')}
-    rows.push(...data.rows);
+    try{rows.push(...(await publicMinutes(qs)).rows)}catch(err){if(!key||err.status!==404)throw err}
    }return rows})();
   optionData.set(id,pending);return pending;
  }
@@ -160,9 +189,10 @@ function builderPage(){
  const useFyers=['Equity','Index'].includes(c.p.mode)&&!!session;
  if(!Number.isFinite(first)||!Number.isFinite(last)||last<first)throw Error('Check the selected dates.');
  const rows=[],providers=new Set();
- for(let i=first;i<=last;i+=7*86400000){
-  const from=new Date(i).toISOString().slice(0,10),to=new Date(Math.min(last,i+6*86400000)).toISOString().slice(0,10);
-  const recent=i>Date.now()-30*86400000;
+ for(let i=first;i<=last;){
+  const span=useFyers&&i<Date.now()-30*86400000?28:7;
+  const from=new Date(i).toISOString().slice(0,10),to=new Date(Math.min(last,i+(span-1)*86400000)).toISOString().slice(0,10);
+  const recent=i>Date.now()-30*86400000;i+=span*86400000;
   let data;
   if(useFyers){
    try{data=await fyersRequest('history',{symbol:c.p.s,from,to})}catch(err){if(!recent)throw err}
@@ -170,9 +200,7 @@ function builderPage(){
   if(!data){
    if(!recent)throw Error('Older equity and index history requires a FYERS connection. For this contract, import minute CSV data.');
    const qs=new URLSearchParams({symbol:c.p.mode==='Options'?c.p.s.split(' ')[0]:c.p.s,...(c.p.contractKey?{contract:c.p.contractKey}:{}),from,to});
-   const response=await fetch(authOrigin+'/functions/v1/market-minute?'+qs);
-   data=await response.json();
-   if(!response.ok)throw Error(c.p.s+' · '+(data.error||'Market feed unavailable'));
+   data=await publicMinutes(qs);
   }
   rows.push(...data.rows);if(data.rows.length)providers.add(data.source);
  }
@@ -188,7 +216,7 @@ function builderPage(){
  let net=0,peak=0,dd=0,value=0;for(let t of trades){net+=t.net;peak=Math.max(peak,net);t.cum=net;t.dd=net-peak;dd=Math.min(dd,t.dd);value+=t.qty*t.ep;t.tip=t.d+' '+t.exit+' · '+t.s+' · Net ₹'+fmt(t.net)+' · Cumulative ₹'+fmt(net)}
  let p={...runs[0].p,limits,legs:runs.map(r=>r.p),s:configs.map(c=>c.p.s).join(' + '),id:configs.map(c=>c.p.id).join('|'),source:runs.map(r=>r.p.source).join(' / ')};
  const prices=configs.flatMap(c=>c.run?c.run.prices:[{name:c.p.s,bars:dailyOHLC(c.rows.filter(row=>row.d>=common.from&&row.d<=common.to))}]).filter(x=>x?.bars.length);
- lastRun={p,trades,prices,net,dd,ret:value?100*net/value:0,win:trades.length?100*trades.filter(t=>t.net>0).length/trades.length:0,skipped:[...new Set(runs.flatMap(r=>r.skipped))]};lastMonth='';$('runMessage').textContent=shared.size+' eligible basket sessions';showResults();
+ lastRun={definition:submitted,savedId:editing?.id,p,trades,prices,net,dd,ret:value?100*net/value:0,win:trades.length?100*trades.filter(t=>t.net>0).length/trades.length:0,skipped:[...new Set(runs.flatMap(r=>r.skipped))]};lastMonth='';$('runMessage').textContent=shared.size+' eligible basket sessions';if(editing){const name=$('editName').value.trim()||editing.name;await storeStrategy({...lastRun,id:editing.id,name,pending:false})}showResults();
  }catch(err){$('results').replaceChildren();$('runMessage').textContent=err.message}};
 }
 segmentedIds.add('algoTU');segmentedIds.add('algoSU');segmentedIds.add('strategyMode');segmentedIds.add('holding');

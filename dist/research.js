@@ -38,7 +38,18 @@ function drill(month){
  $('allMonths').onclick=()=>drill('');
  $('texport').onclick=()=>csv('trades-'+(month||'all'),[tradeHead,...rows]);
 }
-function saveDialog(){modal('Save backtest','<form id="saveRun"><div class="fields">'+input('Run name','runName',lastRun.p.s+' '+lastRun.p.side+' '+(saved.length+1),'text','maxlength="80"')+'</div><button class="primary">Save to comparison</button><p id="savedMsg"></p></form>');$('saveRun').onsubmit=async e=>{e.preventDefault();try{let item={...lastRun,id:crypto.randomUUID(),name:$('runName').value.trim()};await persist('runs',item);saved.push(item);dlg.close()}catch(err){$('savedMsg').textContent=err.message}}}
+function saveDialog(){
+ const run=lastRun,existing=saved.find(s=>s.id===(run.savedId||run.id));
+ modal('Save strategy','<form id="saveRun"><div class="fields">'+input('Strategy name','runName',existing?.name||run.p.s,'text','maxlength="80"')+'</div><button class="primary">Save strategy</button><p id="savedMsg" role="status"></p></form>');
+ $('saveRun').onsubmit=async e=>{
+  e.preventDefault();const button=e.target.querySelector('button');button.disabled=true;
+  try{const name=$('runName').value.trim();if(!name)throw Error('Enter a strategy name.');
+   const id=existing?.id||run.savedId||crypto.randomUUID();
+   const item={...run,id,savedId:id,name,pending:!!run.pending};
+   await storeStrategy(item);run.savedId=id;dlg.close();
+  }catch(err){$('savedMsg').textContent=err.message;button.disabled=false}
+ };
+}
 function compatible(a,b){return JSON.stringify((a.p.legs||[a.p]).map(l=>l.fees||[]))===JSON.stringify((b.p.legs||[b.p]).map(l=>l.fees||[])) && ['id','from','to','capital','slip','fee','rate'].every(k=>a.p[k]===b.p[k])}
 function comparison(){let opts=saved.map((r,i)=>'<option value="'+i+'">'+esc(r.name)+'</option>').join('');$('app').innerHTML=heading('Strategy research','Strategy Comparison','Compare saved runs using the same dataset, dates, fees and slippage.')+'<section class="panel">'+(saved.length?'<div class="fields"><label>Baseline<select id="baseline">'+opts+'</select></label><label>Comparison<select id="candidate"></select></label></div><div id="compareBody"></div>':empty('No saved runs yet. Run a backtest and choose Save backtest.')+'<p><a href="#test">Open Backtester</a></p>')+'</section>';if(!saved.length)return;let render=()=>{let a=saved[+$('baseline').value],b=$('candidate').value===''?null:saved[+$('candidate').value],set=b?[a,b]:[a];$('compareBody').innerHTML=note(esc(a.p.source)+' · '+a.p.from+' to '+a.p.to+' · Slippage '+a.p.slip+' bps · Charges calculated per leg')+table(['Strategy','Return','Net P&L','Drawdown','Trades','Win rate'],set.map(r=>[esc(r.name),pct(peakCapital(r)?100*r.net/peakCapital(r):0),cash(r.net),cash(r.dd),r.trades.length,fmt(r.win)+'%']))+(b?'':empty('Save another run with matching data and execution costs to compare.'))+multiCurve(set)};let options=()=>{let i=+$('baseline').value;$('candidate').innerHTML=saved.map((r,j)=>j!==i&&compatible(saved[i],r)?'<option value="'+j+'">'+esc(r.name)+'</option>':'').join('');render()};$('baseline').onchange=options;$('candidate').onchange=render;options()}
 function multiCurve(runs){

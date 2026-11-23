@@ -30,6 +30,7 @@ function stockRun(model,from,to){
 async function historicalBacktest(){
   const app=$('app');
   app.innerHTML=heading('Historical backtest','Strategy library','Open a strategy to see its rules, quarterly results and trade log.')+'<section class="panel"><h2>Profitable in all 12 quarters</h2><div class="basketCards" id="basketCards">Loading stock results…</div><details><summary>Research results · below target</summary><div id="researchBaskets" class="basketCards"></div></details></section><section class="panel"><h2>Index options</h2><div id="optionCards" class="basketCards"></div></section>';
+  savedStrategySection(app);
   const cards=$('basketCards');
   ['ATM call sell','ATM put sell','ATM call buy','ATM put buy','Under ₹200 call sell','Under ₹200 put sell','Near ₹300 call sell','Near ₹300 put sell','Monthly trend ATM','Monthly trend OTM','Monthly short put'].forEach((name,i)=>{
     const btn=document.createElement('button');btn.textContent=name;btn.onclick=()=>optionHistory(i);$('optionCards').append(btn);

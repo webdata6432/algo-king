@@ -1,5 +1,53 @@
 pages.angel='Broker connections';
-async function fyersRequest(action,details={}){
+const historicalReads=new Map();
+function cachedRead(key,ttl,load){
+ const old=historicalReads.get(key);
+ if(old&&old.until>Date.now())return old.promise;
+ if(historicalReads.size>=80)historicalReads.delete(historicalReads.keys().next().value);
+ const entry={until:Date.now()+ttl};
+ entry.promise=Promise.resolve().then(load).catch(err=>{
+  if(historicalReads.get(key)===entry)historicalReads.delete(key);throw err;
+ });
+ historicalReads.set(key,entry);return entry.promise;
+}
+async function savedMarketRead(key,ttl,read){
+ let store,url;
+ try{
+  if(globalThis.caches){
+   store=await caches.open('ak-observed-history-v1');
+   url=new URL('saved-market/'+encodeURIComponent(key),document.baseURI).href;
+   const hit=await store.match(url);
+   if(hit&&Date.now()-Number(hit.headers.get('x-saved-at'))<ttl)return await hit.json();
+  }
+ }catch{store=null}
+ const data=await read();
+ if(store && (data.rows?.length||data.bars?.length||data.stocks?.length)&&!data.pending){
+  try{
+   await store.put(url,new Response(JSON.stringify(data),{headers:{'content-type':'application/json','x-saved-at':String(Date.now())}}));
+   const keys=await store.keys();
+   if(keys.length>120)await store.delete(keys[0]);
+  }catch{}
+ }
+ return data;
+}
+function fyersRequest(action,details={}){
+ if(!session||!['archiveRank','stockSessions','history'].includes(action))return brokerRequest(action,details);
+ const historical=details.to<new Date(Date.now()+19800000).toISOString().slice(0,10);
+ const ttl=historical&&action==='history'?3600000:60000;
+ const key=JSON.stringify([session.user?.id,action,details]);
+ return cachedRead(key,ttl,()=>savedMarketRead(key,ttl,()=>brokerRequest(action,details)));
+}
+function publicMinutes(params){
+ const key=params.toString(),url=authOrigin+'/functions/v1/market-minute?'+key;
+ const past=params.get('to')<new Date(Date.now()+19800000).toISOString().slice(0,10);
+ const ttl=past?3600000:30000;
+ return cachedRead(url,ttl,()=>savedMarketRead(url,ttl,async()=>{
+  const response=await fetch(url),data=await response.json();
+  if(!response.ok)throw Object.assign(Error(data.error||'Minute history unavailable'),{status:response.status});
+  return data;
+ }));
+}
+async function brokerRequest(action,details={}){
  const owner=session;
  if(!owner)throw Error('Unlock Algo King to connect.');
  if(owner.expires_at*1000<Date.now()+30000){
