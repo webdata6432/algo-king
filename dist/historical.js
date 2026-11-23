@@ -9,7 +9,17 @@ async function optionHistory(initial=0) {
       if (!res.ok) throw Error();
       return res.json();
     }
-    const [archive, minutes, research] = await Promise.all([read('market/historical.json'), read('market/historical-minutes.json'), read('market/monthly-research.json')]);
+    async function dailyModels(){
+      const version='__DAILY_MODEL_VERSION__';
+      if(!/^[a-f0-9]{40}$/.test(version))return read('market/historical.json');
+      return cachedRead('daily-models-'+version,86400000,async()=>{
+        const {url}=await fyersRequest('dailyModels',{version});
+        const file=await fetch(url);
+        if(!file.ok)throw Error('Daily option archive unavailable');
+        return new Response(file.body.pipeThrough(new DecompressionStream('gzip'))).json();
+      });
+    }
+    const [archive, minutes, research] = await Promise.all([dailyModels(), read('market/historical-minutes.json'), read('market/monthly-research.json')]);
     const days = Object.keys(archive).sort();
     const end = days.at(-1);
     const strategies = [['S1','ATM','CE','Sell'],['S2','ATM','PE','Sell'],['S3a','ATM','CE','Buy'],['S3b','ATM','PE','Buy'],['S4a','Under 200','CE','Sell'],['S4b','Under 200','PE','Sell'],['S5a','Near 300','CE','Sell'],['S5b','Near 300','PE','Sell']];
@@ -21,9 +31,10 @@ async function optionHistory(initial=0) {
     function period() {
       if(field('period').value==='Custom')return;
       const available = researchMode() ? Object.keys(research).sort() : days;
-      const last = available.at(-1);
-      const n = ({'7D':7,'15D':15,'30D':30,'1Y':365,'3Y':1095,'5Y':1826})[field('period').value];
-      field('from').value=field('period').value==='All history'?available[0]:new Date(Date.parse(last)-(n-1)*86400000).toISOString().slice(0,10);
+      const all=field('period').value==='All history';
+      // Move the date boundary to the regular 15:30 IST market close.
+      const last=all?available.at(-1):new Date(Date.now()-10*3600000).toISOString().slice(0,10);
+      field('from').value=all?available[0]:presetStart(last,field('period').value);
       field('to').value=last;
     }
     const money=n=>'₹'+fmt(n);
@@ -66,9 +77,9 @@ async function optionHistory(initial=0) {
       const slack=(study?34:6)*86400000;
       const outside=Date.parse(range[0])-Date.parse(from)>slack||Date.parse(to)-Date.parse(range.at(-1))>slack;
       const partial=custom&&missing>0;
-      const coverage='<p>NSE daily archive '+range[0]+' to '+range.at(-1)+' · '+dates.length+(study?' scheduled monthly dates in range':' archived sessions in range')+(custom?' · '+missing+' qualifying setups missing exact Upstox candles':'')+'</p>';
+      const coverage='<p>'+periodLabel+' · '+dates.length+(study?' scheduled monthly dates in range':' archived sessions in range')+(custom?' · '+missing+' qualifying setups missing exact Upstox candles':'')+'</p>';
       if(outside||partial||missingDays){
-        output.innerHTML='<strong>Incomplete history for '+periodLabel+'</strong>'+coverage+'<p>'+ (missingDays?missingDays+' exchange reports still need recovery.':partial?'Exact entry or exit candles are missing for '+missing+' setups.':'The requested dates extend beyond the available archive.')+' Choose a covered period to calculate P&amp;L.</p>';return;
+        output.innerHTML='<strong>Incomplete history for '+periodLabel+'</strong>'+coverage+'<p>'+ (missingDays?missingDays+' exchange reports still need recovery.':partial?'Exact entry or exit candles are missing for '+missing+' setups.':'The requested dates extend beyond the available archive.')+' Available exchange history: '+displayDates(range[0]+' – '+range.at(-1))+'. Choose a covered period to calculate P&amp;L.</p>';return;
       }
       if(!trades.length){output.innerHTML=coverage+'<p>No verified fills for this selection.</p>';return;}
       const nets=trades.map(t=>t.net),wins=nets.filter(n=>n>0).length;

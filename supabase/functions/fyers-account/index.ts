@@ -30,10 +30,35 @@ async function archiveWrite(path:string,data:unknown){
  const {error}=await minuteStore.upload(path,blob,{contentType:"application/gzip",upsert:true});
  if(error)throw Error("Minute archive write failed");
 }
+// Pull a published model snapshot by Git blob ID. The Pages bundle pins that ID.
+async function dailyModels(version:unknown){
+ if(typeof version!=="string"||!/^[a-f0-9]{40}$/.test(version))return reply({error:"Invalid archive version"},400);
+ const folder="models",name=version+".gz",path=folder+"/"+name;
+ const listed=await minuteStore.list(folder,{search:name,limit:1});
+ if(listed.error)throw Error("Daily option archive unavailable");
+ if(!listed.data.some(f=>f.name===name)){
+  const src=await fetch("https://api.github.com/repos/webdata6432/algo-king/git/blobs/"+version,{
+   headers:{Accept:"application/vnd.github.raw+json","User-Agent":"Algo-King-market-archive"},signal:AbortSignal.timeout(18000)});
+  if(!src.ok)return reply({error:"Exchange model source unavailable"},502);
+  const bytes=new Uint8Array(await src.arrayBuffer());
+  if(bytes.length>5000000)return reply({error:"Unexpected exchange archive size"},422);
+  const header=utf.encode("blob "+bytes.length+"\0"),raw=new Uint8Array(header.length+bytes.length);
+  raw.set(header);raw.set(bytes,header.length);
+  const hash=Array.from(new Uint8Array(await crypto.subtle.digest("SHA-1",raw)),b=>b.toString(16).padStart(2,"0")).join("");
+  if(hash!==version)return reply({error:"Exchange model version mismatch"},502);
+  const data=JSON.parse(new TextDecoder().decode(bytes)),days=Object.keys(data);
+  if(!days.length||!days.every(d=>/^\d{4}-\d{2}-\d{2}$/.test(d)&&(data[d]===null||Array.isArray(data[d])&&data[d].every((r:any)=>Array.isArray(r)&&r.length===8&&r[0]===d))))
+   return reply({error:"Invalid exchange models"},422);
+  await archiveWrite(path,data);
+ }
+ const signed=await minuteStore.createSignedUrl(path,900);
+ if(signed.error)throw Error("Daily option archive unavailable");
+ return reply({url:signed.data.signedUrl});
+}
 async function minuteMonth(body:any){
  const {instrument,month}=body;
  const indices=["NSE_INDEX|Nifty 50","BSE_INDEX|SENSEX","NSE_INDEX|Nifty Bank","NSE_INDEX|NIFTY MIDCAP 100"];
- if(typeof instrument!=="string"||(!indices.includes(instrument)&&!/^NSE_EQ\|[A-Z0-9]{12}$/.test(instrument))||!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))return reply({error:"Invalid instrument or month"},400);
+ if(typeof instrument!=="string"||(!indices.includes(instrument)&&!/^(NSE|BSE)_EQ\|[A-Z0-9]{12}$/.test(instrument))||!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))return reply({error:"Invalid instrument or month"},400);
  const now=new Date(Date.now()+19800000),today=now.toISOString().slice(0,10),current=today.slice(0,7);
  const safe=instrument.replace(/[^A-Za-z0-9]/g,"_");
  const yearFolder="yearly/"+safe;
@@ -73,6 +98,7 @@ async function minuteMonth(body:any){
  const from=month+"-01",end=new Date(Date.UTC(+month.slice(0,4),+month.slice(5),0)).toISOString().slice(0,10),to=end<today?end:today;
  const path="spot/"+instrument.replace(/[^A-Za-z0-9]/g,"_")+"/"+month+".gz";
  let pack=await archiveRead(path);
+ let saved=true;
  if(!pack|| (month===current && Date.now()-pack.at>300000) || (month!==current && !pack.final)){
   const response=await fetch("https://api.upstox.com/v3/historical-candle/"+encodeURIComponent(instrument)+"/minutes/1/"+to+"/"+from,{signal:AbortSignal.timeout(20000)});
   if(!response.ok)return reply({error:"Upstox minute history unavailable for "+month+" ("+response.status+")"},502);
@@ -80,9 +106,11 @@ async function minuteMonth(body:any){
   if(!Array.isArray(candles))return reply({error:"Incomplete provider response for "+month},502);
   const rows=candles.filter(([t,o,h,l,c]:any[])=>typeof t==="string"&&t.startsWith(month+"-")&&t.endsWith("+05:30")&&t.slice(11,16)>="09:15"&&t.slice(11,16)<"15:30"&&Date.parse(t)+60000<=Date.now()&&[o,h,l,c].every(v=>Number.isFinite(v)&&v>0)&&h>=Math.max(o,c)&&l<=Math.min(o,c)).map(([t,o,h,l,c]:any[])=>[Math.floor(Date.parse(t)/60000),o,h,l,c]).sort((a:number[],b:number[])=>a[0]-b[0]);
   pack={rows,at:Date.now(),final:month!==current};
-  if(rows.length)await archiveWrite(path,pack);
+  if(rows.length){
+   try{await archiveWrite(path,pack)}catch(err){if(body.warm)throw err;saved=false}
+  }
  }
- return reply(body.warm?{count:pack.rows.length,month,instrument}:{candles:pack.rows,source:"Upstox · Supabase minute archive"});
+ return reply(body.warm?{count:pack.rows.length,month,instrument}:{candles:pack.rows,source:saved?"Upstox · Supabase minute archive":"Upstox · observed history",archived:saved});
 }
 
 Deno.serve(async req=>{
@@ -106,6 +134,7 @@ Deno.serve(async req=>{
     const {data:{user}}=await db.auth.getUser(bearer);
     if(!user?.email_confirmed_at||user.email?.toLowerCase()!=="webdata6432@gmail.com")return reply({error:"Owner access required"},403);
     const body=await req.json(),table=db.from("fyers_connections"),uid=user.id;
+    if(body.action==="dailyModels")return await dailyModels(body.version);
     if(body.action==="minuteMonth"||body.action==="minuteLinks"||body.action==="minuteYear")return await minuteMonth(body);
     // Read durable expired-contract data before checking today's broker login.
     if(["expiredBars","expiredChain","expiredDates"].includes(body.action)){

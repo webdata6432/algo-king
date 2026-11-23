@@ -124,10 +124,27 @@ function pollWhile(node,interval,read,paint,onError){
  refresh();
 }
 
+async function equityDirectory(){
+ return cachedRead('all-equity-directory',3600000,async()=>{
+  async function read(file){const r=await fetch('market/'+file+'.json');if(!r.ok)throw Error('Stock directory unavailable');return r.json()}
+  const [shares,caps]=await Promise.allSettled([read('shares'),read('caps')]);
+  const rows=new Map();
+  for(const [symbol,name,,ticker,,key] of caps.value?.companies||[]){
+   if(/^(NSE|BSE)_EQ\|[A-Z0-9]{12}$/.test(key))rows.set(key,[symbol,name,key,ticker]);
+  }
+  for(const [symbol,name,key] of shares.value||[]){
+   rows.set(key,[symbol,name,key,rows.get(key)?.[3]||null]);
+  }
+  if(!rows.size)throw Error('Stock directory unavailable');
+  return [...rows.values()].sort((a,b)=>Number(b[2].startsWith('NSE_EQ|'))-Number(a[2].startsWith('NSE_EQ|')));
+ });
+}
+
 async function archivedMinutes(instrument,from,to){
  const early=[];
  if(from<'2022-01-01'){
-  const stocks=await cachedRead('share-directory',3600000,async()=>{const r=await fetch('market/shares.json');return r.json()});
+  const stocks=await equityDirectory();
+  if(instrument.startsWith('BSE_EQ|'))throw Error('BSE stock minute archive starts in January 2022.');
   const symbol=instrument==='NSE_INDEX|Nifty 50'?'NIFTY 50':instrument==='BSE_INDEX|SENSEX'?'SENSEX':stocks.find(r=>r[2]===instrument)?.[0];
   if(!symbol)throw Error('No historical symbol mapping before January 2022.');
   const stop=[to,'2021-12-31'].sort()[0];

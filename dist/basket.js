@@ -4,7 +4,20 @@ function builderPage(){
  const rangeEnd=new Date(Date.now()+19800000).toISOString().slice(0,10);
  $('app').innerHTML=heading('Strategy studio','Backtester','Build a strategy from minute candles. Times are in IST.',importButton+' <button onclick="strategyLibrary()">Saved strategies</button>')+'<form id="strategy" class="panel"><div class="row">'+select('Strategy','strategyMode',['Options','Stock','Basket'])+'<button type="button" id="addLeg">＋ Add leg</button></div><div class="fields">'+select('Dates','bp',['7D','15D','30D','1Y','3Y','5Y','Custom'])+input('From','bf',presetStart(rangeEnd,'7D'),'date')+input('Through','bt',rangeEnd,'date')+'</div><div id="legs"></div><h3>Algo targets · all legs</h3><div class="fields">'+riskField('Total profit target','algoTarget','algoTU',0)+riskField('Total stop loss','algoStop','algoSU',0)+'</div><p class="hint">Checked at each minute open using combined gross P&amp;L. % uses entry value. Points sum the signed moves per leg. Zero is off.</p><h3>Daily transactions</h3><div class="fields">'+input('Transactions per day','maxEntries',1,'number','readonly')+'</div><h3>Algo expiry and exit</h3><div class="fields">'+ select('Trade type','holding',['Intraday','Delivery'])+select('Delivery exit','deliveryBasis',['Sessions after entry','Sessions before expiry'])+input('Trading sessions','deliveryN',1,'number','min="0" step="1"')+input('Delivery exit · IST','deliveryTime','15:15','time')+input('Algo entry from · IST','algoStart','09:15','time')+input('Algo exit by · IST','algoEnd','15:29','time')+input('Slippage · bps per fill','slip',0,'number','min="0" step="any"')+'</div><div class="row"><button class="primary">Run backtest</button></div><p role="status" id="runMessage"></p><details><summary>Execution rules</summary>Price above and below use the first qualifying minute open after the entry window starts. Limit orders fill at the limit or a better open. For a limit touched inside a candle, only an adverse stop can exit in that candle. Each strategy opens once per eligible day when every leg qualifies. All legs together count as one transaction. Automatic re-entry is off. Stops take priority inside an ambiguous candle. Gaps fill at the open. Incomplete candle windows skip the session. Delivery uses the selected session count and the earlier applicable exit time.</details></form><div id="results"></div>';
  const legs=$('legs'),sources=[...[...groups.flat(),'NIFTY 50','SENSEX','BANKNIFTY','NIFTY MIDCAP 100'].map(s=>({s,id:'market:'+s,title:s+' · Market minute candles'})),...testSources().filter(x=>!x.id.startsWith('demo:'))];
- cachedRead('share-directory',3600000,async()=>{const r=await fetch('market/shares.json');if(!r.ok)throw Error('Stock directory unavailable');return r.json()}).then(rows=>{const bySymbol=new Map(sources.filter(x=>x.id.startsWith('market:')).map(x=>[x.s,x]));for(const [s,name,key] of rows){let item=bySymbol.get(s);if(!item){item={s,id:'market:'+s};sources.push(item);bySymbol.set(s,item)}Object.assign(item,{title:s+' · '+name,key})}const active=document.activeElement;if(legs.contains(active)&&active.type==='search'&&!sources.some(s=>s.title===active.value))active.dispatchEvent(new Event('input'))}).catch(()=>{});
+ equityDirectory().then(rows=>{
+  const bySymbol=new Map(sources.filter(x=>x.id.startsWith('market:')).map(x=>[x.s,x]));
+  for(const [s,name,key,ticker] of rows){
+   let item=bySymbol.get(s);
+   const duplicate=Boolean(item?.key&&item.key!==key);
+   if(!item||duplicate){
+    item={s,id:'market:'+(duplicate?key:s)};sources.push(item);
+    if(!duplicate)bySymbol.set(s,item);
+   }
+   Object.assign(item,{title:s+' · '+name+(duplicate?' · '+key:''),key,ticker});
+  }
+  const active=document.activeElement;
+  if(legs.contains(active)&&active.type==='search'&&!sources.some(s=>s.title===active.value))active.dispatchEvent(new Event('input'));
+ }).catch(()=>{});
  function add(kind,restore){
  const n=++legSequence,el=document.createElement('section');el.className='legrow';
  const field=(label,key,value,type='number',attrs='min="0" step="any"')=>input(label,key+n,value,type,attrs);
@@ -54,10 +67,11 @@ function builderPage(){
   }
   marker.textContent='Fetching latest price…';
   async function readPrice(){
-   const q=(await stockQuotes([x.s]).catch(()=>[]))[0];
+   const bse=x.key?.startsWith('BSE_EQ|');
+   const q=(!bse||x.ticker)?(await stockQuotes([x.ticker||x.s]).catch(()=>[]))[0]:null;
    if(q?.price>0)return {price:q.price,label:'Latest price',stamp:'FYERS · '+(q.time?quoteTime(q.time):'Time unavailable')};
    const url=authOrigin+'/functions/v1/market-minute?mode=quote&symbol='+encodeURIComponent(x.s);
-   const fallback=await fetch(url,{signal:AbortSignal.timeout(6000)}).then(r=>r.ok?r.json():null).catch(()=>null);
+   const fallback=bse?null:await fetch(url,{signal:AbortSignal.timeout(6000)}).then(r=>r.ok?r.json():null).catch(()=>null);
    if(fallback?.price>0)return {price:fallback.price,label:'Latest price',stamp:(fallback.source||'Market quote')+' · '+(fallback.asOf||(fallback.time?quoteTime(fallback.time):'Time unavailable'))};
    const to=new Date(Date.now()+19800000).toISOString().slice(0,10);
    const res=await fyersRequest('archiveRank',{from:presetStart(to,'30D'),to,cap:kind==='Index'?'Indices':'All stocks',query:x.s,cut:1,limit:20});
@@ -189,10 +203,10 @@ function builderPage(){
  const first=Date.parse(common.from),last=Date.parse(common.to);
  const useFyers=['Equity','Index'].includes(c.p.mode)&&!!session;
  if(!Number.isFinite(first)||!Number.isFinite(last)||last<first)throw Error('Check the selected dates.');
- if(session&&c.p.mode==='Equity'&&c.p.contractKey?.startsWith('NSE_EQ|')){
+ if(session&&c.p.mode==='Equity'&&/^(NSE|BSE)_EQ\|/.test(c.p.contractKey)){
   c.rows=await archivedMinutes(c.p.contractKey,common.from,common.to);
   if(!c.rows.length)throw Error('No observed minute candles for '+c.p.s+' in the requested dates.');
-  c.p.source='Supabase · Upstox minute archive · '+c.rows[0].d+' — '+c.rows.at(-1).d;return;
+  c.p.source=c.p.s+' · Upstox minutes · '+displayDates(c.rows[0].d+' – '+c.rows.at(-1).d)+' · '+c.rows.length.toLocaleString('en-IN')+' candles';return;
  }
  const rows=[],providers=new Set();
  for(let i=first;i<=last;){
@@ -222,7 +236,7 @@ function builderPage(){
  let net=0,peak=0,dd=0,value=0;for(let t of trades){net+=t.net;peak=Math.max(peak,net);t.cum=net;t.dd=net-peak;dd=Math.min(dd,t.dd);value+=t.qty*t.ep;t.tip=t.d+' '+t.exit+' · '+t.s+' · Net ₹'+fmt(t.net)+' · Cumulative ₹'+fmt(net)}
  let p={...runs[0].p,limits,legs:runs.map(r=>r.p),s:configs.map(c=>c.p.s).join(' + '),id:configs.map(c=>c.p.id).join('|'),source:runs.map(r=>r.p.source).join(' / ')};
  const prices=configs.flatMap(c=>c.run?c.run.prices:[{name:c.p.s,bars:dailyOHLC(c.rows.filter(row=>row.d>=common.from&&row.d<=common.to))}]).filter(x=>x?.bars.length);
- lastRun={definition:submitted,savedId:editing?.id,p,trades,prices,net,dd,ret:value?100*net/value:0,win:trades.length?100*trades.filter(t=>t.net>0).length/trades.length:0,skipped:[...new Set(runs.flatMap(r=>r.skipped))]};lastMonth='';$('runMessage').textContent=shared.size+' eligible basket sessions';if(editing){const name=$('editName').value.trim()||editing.name;await storeStrategy({...lastRun,id:editing.id,name,pending:false})}showResults();
+ lastRun={definition:submitted,savedId:editing?.id,p,trades,prices,net,dd,ret:value?100*net/value:0,win:trades.length?100*trades.filter(t=>t.net>0).length/trades.length:0,skipped:[...new Set(runs.flatMap(r=>r.skipped))]};lastMonth='';$('runMessage').textContent=displayDates(common.from+' – '+common.to)+' · '+shared.size+' trading sessions with entries · '+lastRun.skipped.length+' skipped sessions';if(editing){const name=$('editName').value.trim()||editing.name;await storeStrategy({...lastRun,id:editing.id,name,pending:false})}showResults();
  }catch(err){$('results').replaceChildren();$('runMessage').textContent=err.message}};
 }
 segmentedIds.add('algoTU');segmentedIds.add('algoSU');segmentedIds.add('strategyMode');segmentedIds.add('holding');

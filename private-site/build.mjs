@@ -1,5 +1,5 @@
 import {readFile,writeFile,mkdir,copyFile} from 'node:fs/promises';
-import {randomBytes,createCipheriv,publicEncrypt} from 'node:crypto';
+import {randomBytes,createCipheriv,publicEncrypt,createHash} from 'node:crypto';
 import {gzipSync} from 'node:zlib';
 import {execFileSync} from 'node:child_process';
 await mkdir('published',{recursive:true});
@@ -7,7 +7,10 @@ execFileSync(process.execPath,['bundle.mjs','/tmp/ak-private-app.html']);
 let html=await readFile('/tmp/ak-private-app.html','utf8');
 for(const [file,mime] of [['algo-king.svg','image/svg+xml'],['rohit.jpg','image/jpeg']])
  html=html.replaceAll(file,'data:'+mime+';base64,'+(await readFile('dist/'+file)).toString('base64'));
-for(const file of ['historical','historical-minutes','monthly-research']){
+const models=await readFile('dist/market/historical.json');
+const version=createHash('sha1').update('blob '+models.length+'\0').update(models).digest('hex');
+html=html.replace('__DAILY_MODEL_VERSION__',version);
+for(const file of ['historical-minutes','monthly-research']){
  const bytes=await readFile('dist/market/'+file+'.json');
  html=html.replaceAll("'market/"+file+".json'","'data:application/json;base64,"+bytes.toString('base64')+"'");
 }

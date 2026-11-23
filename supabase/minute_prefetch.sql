@@ -16,7 +16,7 @@ begin
  for job in
   with universe as materialized (
    select instrument,ticker,cap from public.daily_directory
-   where active and (instrument ~ '^NSE_EQ\|[A-Z0-9]{12}$' or cap='Index')
+   where active and not unverifiable and (instrument ~ '^(NSE|BSE)_EQ\|[A-Z0-9]{12}$' or cap='Index')
    order by case cap when 'Index' then 0 when 'Large Cap' then 1 when 'Mid Cap' then 2 else 3 end,ticker
   )
   select u.instrument,m.ym
