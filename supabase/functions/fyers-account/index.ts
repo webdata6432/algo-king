@@ -36,14 +36,14 @@ Deno.serve(async req=>{
       if(error)throw error;
       if(!stock)return reply({error:"Stock missing from the archive directory"},404);
       const day=86400000,ready=!stock.unverifiable&&stock.stage>0&&stock.checked>=(to<stock.desired?to:stock.desired)&&(stock.stage===3||Date.parse(from)>=Date.parse(stock.anchor)-(stock.stage*3650-1)*day);
-      if(ready&&body.ohlc!==true){
+      if((ready||stock.unverifiable)&&body.ohlc!==true){
         const {data:years,error}=await db.from("daily_prices").select("days,opens,closes").eq("ticker",ticker).gte("yr",Number(from.slice(0,4))-1).lte("yr",Number(to.slice(0,4))).order("yr");
         if(error)throw error;
         const bars=[];let prev=null;
         for(const y of years||[])for(const [i,d] of y.days.entries()){
           if(d<from)prev=y.closes[i]/100;else if(d<=to)bars.push([d,y.opens[i]/100,y.closes[i]/100]);
         }
-        if(bars.length)return reply({bars,prev,source:"Supabase daily history"});
+        if(bars.length)return reply({bars,prev,source:stock.unverifiable?"NSE daily reports · available sessions":"Supabase daily history"});
       }
       const values=new Map<string,number[]>();
       for(let start=Math.max(Date.parse("2000-01-01"),Date.parse(from)-14*day);start<=Date.parse(to);start+=3650*day){

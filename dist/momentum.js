@@ -93,7 +93,7 @@ function market(){
     leaderboard=result.stocks.map(stock=>{
      let prev=stock.prev==null?null:stock.prev/100;
      const rows=stock.bars.map(([d,o,c])=>{const b=bar(d,o/100,c/100,prev);prev=c/100;return b});
-     return {s:stock.symbol,category:stock.cap,ticker:stock.ticker,source:'Supabase · Upstox daily',rows,...score(rows,filters.cut),...aggregate(rows)};
+     return {s:stock.symbol,category:stock.cap,ticker:stock.ticker,source:'Supabase daily archive',rows,...score(rows,filters.cut),...aggregate(rows)};
     });
     const pending=result.pending;
     status.textContent=(pending?'Archive updating · provisional ranking · '+pending+' pending. ':'Full archive scan · ')+result.total+' in group · '+result.unavailable+' unavailable · '+result.withData+' with sessions · '+result.matched+' matching · '+leaderboard.length+' shown.';

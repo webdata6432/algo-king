@@ -33,7 +33,7 @@ returns jsonb language sql stable set search_path='' as $$
  )
  select jsonb_build_object('total',(select count(*) from universe),
  'pending',(select count(*) from universe where not coalesce(ready,false)),
- 'unavailable',(select count(*) from universe where unverifiable),'withData',(select count(*) from scores),'matched',(select count(*) from matches),
+ 'unavailable',(select count(*) from universe u where unverifiable and not exists(select 1 from scores s where s.ticker=u.ticker)),'withData',(select count(*) from scores),'matched',(select count(*) from matches),
  'stocks',coalesce((select jsonb_agg(to_jsonb(detail) order by pos) from detail),'[]'::jsonb));
 $$;
 revoke all on function public.momentum_archive(date,date,text,text,integer,integer) from public,anon,authenticated;
