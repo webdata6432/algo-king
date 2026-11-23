@@ -1,6 +1,6 @@
 const levels=[1,2,3,5], presetNames=['7D','15D','30D','1Y','Custom'];
 let leaderboard=[],filters={period:'7D',from:'2026-10-22',to:end,cap:'All stocks',cut:'1%',limit:10,query:''};
-function presetStart(to,period){let d=new Date(to+'T00:00Z');if(period==='1Y')d.setUTCFullYear(d.getUTCFullYear()-1);else d.setUTCDate(d.getUTCDate()-(parseInt(period)-1));return d.toISOString().slice(0,10)}
+function presetStart(to,period){let d=new Date(to+'T00:00Z');if(/^\d+Y$/.test(period))d.setUTCFullYear(d.getUTCFullYear()-parseInt(period));else d.setUTCDate(d.getUTCDate()-(parseInt(period)-1));return d.toISOString().slice(0,10)}
 function score(rows,cut){let hits=levels.map(n=>rows.filter(r=>Math.abs(r.i)>=n).length);return {hits,score:cut==='All'?hits[0]:hits[levels.indexOf(parseInt(cut))]}}
 function aggregate(rows){
  const first=rows[0],last=rows.at(-1);

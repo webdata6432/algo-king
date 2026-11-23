@@ -21,7 +21,7 @@ async function savedMarketRead(key,ttl,read){
   }
  }catch{store=null}
  const data=await read();
- if(store && (data.rows?.length||data.bars?.length||data.stocks?.length)&&!data.pending){
+ if(store && (data.candles?.length||data.rows?.length||data.bars?.length||data.stocks?.length)&&!data.pending){
   try{
    await store.put(url,new Response(JSON.stringify(data),{headers:{'content-type':'application/json','x-saved-at':String(Date.now())}}));
    const keys=await store.keys();
@@ -122,4 +122,53 @@ function pollWhile(node,interval,read,paint,onError){
   if(node.isConnected)setTimeout(refresh,interval);
  }
  refresh();
+}
+
+async function archivedMinutes(instrument,from,to){
+ const early=[];
+ if(from<'2022-01-01'){
+  const stocks=await cachedRead('share-directory',3600000,async()=>{const r=await fetch('market/shares.json');return r.json()});
+  const symbol=instrument==='NSE_INDEX|Nifty 50'?'NIFTY 50':instrument==='BSE_INDEX|SENSEX'?'SENSEX':stocks.find(r=>r[2]===instrument)?.[0];
+  if(!symbol)throw Error('No historical symbol mapping before January 2022.');
+  const stop=[to,'2021-12-31'].sort()[0];
+  for(let d=from;d<=stop;d=shiftDate(d,28)){
+   const r=await fyersRequest('history',{symbol,from:d,to:[stop,shiftDate(d,27)].sort()[0]});
+   if(!r.rows.length)throw Error('FYERS has no minute history for '+symbol+' in the requested period starting '+d);
+   early.push(...r.rows);
+  }
+  from='2022-01-01';if(from>to)return early;
+ }
+ const months=[];
+ for(let month=from.slice(0,7);month<=to.slice(0,7);){
+  months.push(month);
+  const next=new Date(month+'-01T00:00:00Z');next.setUTCMonth(next.getUTCMonth()+1);month=next.toISOString().slice(0,7);
+ }
+ const links=months.length>1?(await fyersRequest("minuteLinks",{instrument,month:months[0],months})).links:{};
+ const result=early,missing=[];
+ for(let i=0;i<months.length;i+=4){
+  const chunks=await Promise.all(months.slice(i,i+4).map(async month=>{
+   const key=JSON.stringify(['minuteMonth',instrument,month]),ttl=month===new Date(Date.now()+19800000).toISOString().slice(0,7)?60000:86400000;
+   return cachedRead(key,ttl,()=>savedMarketRead(key,ttl,async()=>{
+    if(links[month]){
+     try{
+      const response=await fetch(links[month]);if(!response.ok)throw Error();
+      const pack=await new Response(response.body.pipeThrough(new DecompressionStream('gzip'))).json();
+      if(pack.final&&pack.rows?.length)return {candles:pack.rows};
+     }catch{}
+    }
+    return fyersRequest('minuteMonth',{instrument,month});
+   }));
+  }));
+  for(const [j,chunk] of chunks.entries()){
+   const month=months[i+j];
+   if(!chunk.candles.length&&from<=month+'-01'&&to.slice(0,7)>month)missing.push(month);
+   for(const [epoch,o,h,l,c] of chunk.candles){
+    const d=new Date(epoch*60000+19800000).toISOString().slice(0,10);
+    if(d>=from&&d<=to)result.push({d,m:(epoch+330)%1440,o,h,l,c});
+   }
+  }
+  const msg=$('runMessage');if(msg)msg.textContent='Loading minute archive · '+instrument+' · '+Math.min(i+4,months.length)+' / '+months.length+' months';
+ }
+ if(missing.length)throw Error('Incomplete minute archive. No data for '+missing.join(', ')+'. Choose a covered range.');
+ return result;
 }

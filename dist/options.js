@@ -76,8 +76,9 @@ function expiredContracts(symbol,expiry,names,monthly){
  const prefix=(symbol==='NIFTY'?'NSE:NIFTY':'BSE:SENSEX')+yy;
  const week=prefix+'123456789OND'[mon]+expiry.slice(8);
  const month=prefix+['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][mon];
- if(expiry<'2025-01-31'||expiry>'2026-12-31')throw Error('Historical lot size has not been verified for '+expiry);
- const lot=symbol==='SENSEX'?20:expiry<='2025-12-30'?75:65;
+ if(expiry<(symbol==='SENSEX'?'2023-08-07':'2022-01-01')||expiry>'2026-12-31')throw Error('Historical lot size has not been verified for '+expiry);
+ const lot=symbol==='SENSEX'?(expiry<(monthly?'2025-02-01':'2025-01-07')?10:20)
+   :expiry<'2024-05-02'?50:expiry<(monthly?'2025-02-01':'2025-01-02')?25:expiry<='2025-12-30'?75:65;
  return names.flatMap(name=>{
   const start=[month,week].find(x=>name.startsWith(x));if(!start)return [];
   const m=/^(\d+(?:\.\d+)?)(CE|PE)$/.exec(name.slice(start.length));
@@ -180,6 +181,12 @@ async function simulateOptions(p,common,load){
   const fill=run.trades.find(t=>t.entryDay===day);
   if(fill){trades.push({...fill,s:name,qty,marks:rows.filter(r=>r.d>=day&&r.d<=fill.d)});busy=fill.d}
   else if(run.skipped.includes(day))skipped.push(day);
+ }
+ if(longRange&&['This week','Next week','Monthly'].includes(p.optionExpiry)){
+  const unavailable=new Set(skipped);
+  for(const month of new Set(days.map(d=>d.slice(0,7)))){
+   if(days.filter(d=>d.startsWith(month)).every(d=>unavailable.has(d)))throw Error('Incomplete option coverage for '+month+' in the requested '+common.from+' to '+common.to+' run. Check the expiry, entry and candle availability.');
+  }
  }
  if(!trades.length)throw Error(p.s+' · No complete option fills for '+common.from+' to '+common.to+'. Available cached spot sessions: '+(cachedSpot.join(', ')||'none')+'. Check expiry, entry time and strike.');
  return {p:{...p,...common,source:'Index options · observed contract minute candles · index coverage '+(days[0]||'—')+' to '+(days.at(-1)||'—')+' · '+trades.length+' fills / '+days.length+' observed index sessions'},trades,skipped,prices:[...candles].map(([name,days])=>({name,bars:[...days.values()]}))};

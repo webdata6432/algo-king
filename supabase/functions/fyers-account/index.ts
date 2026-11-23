@@ -19,6 +19,45 @@ async function read(value:string,uid:string):Promise<Config>{
   const data=await crypto.subtle.decrypt({name:"AES-GCM",iv,additionalData:utf.encode(uid)},await key,cipher);
   return JSON.parse(new TextDecoder().decode(data));
 }
+const minuteStore=db.storage.from("minute-archive");
+async function archiveRead(path:string){
+ const {data,error}=await minuteStore.download(path);
+ if(error||!data)return null;
+ return await new Response(data.stream().pipeThrough(new DecompressionStream("gzip"))).json();
+}
+async function archiveWrite(path:string,data:unknown){
+ const blob=await new Response(new Blob([JSON.stringify(data)]).stream().pipeThrough(new CompressionStream("gzip"))).blob();
+ const {error}=await minuteStore.upload(path,blob,{contentType:"application/gzip",upsert:true});
+ if(error)throw Error("Minute archive write failed");
+}
+async function minuteMonth(body:any){
+ const {instrument,month}=body;
+ const indices=["NSE_INDEX|Nifty 50","BSE_INDEX|SENSEX","NSE_INDEX|Nifty Bank","NSE_INDEX|NIFTY MIDCAP 100"];
+ if(typeof instrument!=="string"||(!indices.includes(instrument)&&!/^NSE_EQ\|[A-Z0-9]{12}$/.test(instrument))||!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))return reply({error:"Invalid instrument or month"},400);
+ const now=new Date(Date.now()+19800000),today=now.toISOString().slice(0,10),current=today.slice(0,7);
+ if(body.action==="minuteLinks"){
+  if(!Array.isArray(body.months)||body.months.length>72||!body.months.every((m:string)=>/^\d{4}-(0[1-9]|1[0-2])$/.test(m)))return reply({error:"Invalid archive months"},400);
+  const prefix="spot/"+instrument.replace(/[^A-Za-z0-9]/g,"_")+"/";
+  const paths=body.months.filter((m:string)=>m<current).map((m:string)=>prefix+m+".gz");
+  const links=paths.length?await minuteStore.createSignedUrls(paths,900):null;
+  return reply({links:Object.fromEntries((links?.data||[]).filter(x=>x.signedUrl&&!x.error&&x.path).map(x=>[x.path!.slice(-10,-3),x.signedUrl]))});
+ }
+ if(month<"2022-01"||month>current)return reply({error:"Minute history starts January 2022. Choose an available month."},422);
+ const from=month+"-01",end=new Date(Date.UTC(+month.slice(0,4),+month.slice(5),0)).toISOString().slice(0,10),to=end<today?end:today;
+ const path="spot/"+instrument.replace(/[^A-Za-z0-9]/g,"_")+"/"+month+".gz";
+ let pack=await archiveRead(path);
+ if(!pack|| (month===current && Date.now()-pack.at>300000) || (month!==current && !pack.final)){
+  const response=await fetch("https://api.upstox.com/v3/historical-candle/"+encodeURIComponent(instrument)+"/minutes/1/"+to+"/"+from,{signal:AbortSignal.timeout(20000)});
+  if(!response.ok)return reply({error:"Upstox minute history unavailable for "+month+" ("+response.status+")"},502);
+  const payload=await response.json(),candles=payload.data?.candles;
+  if(!Array.isArray(candles))return reply({error:"Incomplete provider response for "+month},502);
+  const rows=candles.filter(([t,o,h,l,c]:any[])=>typeof t==="string"&&t.startsWith(month+"-")&&t.endsWith("+05:30")&&t.slice(11,16)>="09:15"&&t.slice(11,16)<"15:30"&&Date.parse(t)+60000<=Date.now()&&[o,h,l,c].every(v=>Number.isFinite(v)&&v>0)&&h>=Math.max(o,c)&&l<=Math.min(o,c)).map(([t,o,h,l,c]:any[])=>[Math.floor(Date.parse(t)/60000),o,h,l,c]).sort((a:number[],b:number[])=>a[0]-b[0]);
+  pack={rows,at:Date.now(),final:month!==current};
+  if(rows.length)await archiveWrite(path,pack);
+ }
+ return reply(body.warm?{count:pack.rows.length,month,instrument}:{candles:pack.rows,source:"Upstox · Supabase minute archive"});
+}
+
 Deno.serve(async req=>{
   if(req.method==="OPTIONS")return new Response(null,{headers});
   if(req.method!=="POST")return reply({error:"POST required"},405);
@@ -28,6 +67,20 @@ Deno.serve(async req=>{
     const {data:{user}}=await db.auth.getUser(bearer);
     if(!user?.email_confirmed_at||user.email?.toLowerCase()!=="webdata6432@gmail.com")return reply({error:"Owner access required"},403);
     const body=await req.json(),table=db.from("fyers_connections"),uid=user.id;
+    if(body.action==="minuteMonth"||body.action==="minuteLinks")return await minuteMonth(body);
+    // Read durable expired-contract data before checking today's broker login.
+    if(["expiredBars","expiredChain","expiredDates"].includes(body.action)){
+      const historicalDates=body.action==="expiredDates"&&typeof body.to==="string"&&body.to<new Date(Date.now()-86400000).toISOString().slice(0,10);
+      const validDate=(v:unknown)=>typeof v==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(v);
+      if(typeof body.symbol==="string"&&/^(NIFTY|SENSEX|(NSE:NIFTY|BSE:SENSEX)[0-9A-Z.]+(CE|PE))$/.test(body.symbol)){
+        const suffix=body.action==="expiredChain"&&validDate(body.expiry)?body.expiry:validDate(body.from)&&validDate(body.to)?body.from+"_"+body.to:null;
+        if(suffix&&(body.action!=="expiredDates"||historicalDates)){
+          const file="expired/"+uid+"/"+body.symbol.replace(":","_")+"/"+suffix+".gz";
+          const archive=await archiveRead(file);
+          if(archive)return reply(archive);
+        }
+      }
+    }
     if(body.action==="stockSessions"){
       const {ticker,from,to}=body;
       const valid=(v:unknown)=>typeof v==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(v)&&Number.isFinite(Date.parse(v));
@@ -147,6 +200,7 @@ Deno.serve(async req=>{
       const valid=(d:unknown)=>typeof d==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(d)&&Number.isFinite(Date.parse(d));
       if((dates||chain)?!index:typeof symbol!=="string"||!/^(NSE:NIFTY|BSE:SENSEX)[0-9A-Z.]+(PE|CE)$/.test(symbol))return reply({error:"Invalid option symbol"},400);
       if(chain?!valid(expiry):(!valid(from)||!valid(to)||from>to||Date.parse(to)-Date.parse(from)>(dates?365:99)*86400000))return reply({error:"Invalid historical date range"},400);
+      const savedPath=(chain||!dates||to<new Date(Date.now()-86400000).toISOString().slice(0,10))?"expired/"+uid+"/"+symbol.replace(":","_")+"/"+(chain?expiry:from+"_"+to)+".gz":null;
       const args=new URLSearchParams({symbol:index||symbol});
       if(chain)args.set("expiry_date",expiry);
       else{args.set("range_from",from);args.set("range_to",to);args.set("date_format","1");if(!dates){args.set("resolution","1");args.set("include_oi","0");args.set("include_greeks","0")}}
@@ -163,7 +217,9 @@ Deno.serve(async req=>{
         if(data.s==="error"&&/no data|data not available for.*range/.test(message)&&action==="expiredBars")return reply({candles:[]});
         return reply({error:"FYERS "+action+" unavailable for "+symbol+" (HTTP "+res.status+", provider code "+Number(data.code||0)+"). "+[data.message,...["range_from","range_to","symbol","resolution","include_oi","include_greeks","date_format"].map(k=>data.data?.[k])].filter(x=>typeof x==="string").join(" · ").slice(0,350).replace(/[A-Za-z0-9_.=-]{30,}/g,"[redacted]")},409);
       }
-      return reply(dates?{dates:data.data.expiry_dates}:chain?{symbols:data.data.contracts.options}:{candles:data.candles});
+      const output=dates?{dates:data.data.expiry_dates}:chain?{symbols:data.data.contracts.options}:{candles:data.candles};
+      if(savedPath&&(output.candles?.length||output.symbols?.length||output.dates?.options?.length))await archiveWrite(savedPath,output);
+      return reply(output);
     }
     if((body.action==="stockQuotes"||body.action==="depth")&&cfg.token){
       const symbols=body.symbols;
