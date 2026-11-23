@@ -16,7 +16,3 @@ begin
 end;$$;
 revoke all on function public.merge_exchange_session(date,jsonb) from public,anon,authenticated;
 grant execute on function public.merge_exchange_session(date,jsonb) to service_role;
-select cron.schedule('ak-exchange-supplement','*/5 * * * *',$job$
- insert into public.exchange_reports(day) select (now() at time zone 'Asia/Kolkata')::date where (now() at time zone 'Asia/Kolkata')::time>='15:31' on conflict do nothing;
- select net.http_post(url:='https://wpqcyyevhxqbhudsxydd.supabase.co/functions/v1/exchange-daily',headers:=jsonb_build_object('Content-Type','application/json','x-worker-key',(select decrypted_secret from vault.decrypted_secrets where name='ak_daily_worker')),body:='{}'::jsonb,timeout_milliseconds:=90000) where exists(select from public.exchange_reports where status='pending' and retry_at<=now());
-$job$);
