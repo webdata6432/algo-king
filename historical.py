@@ -14,7 +14,44 @@ OUT = pathlib.Path("dist/market/historical.json")
 TODAY = dt.datetime.now(dt.timezone(dt.timedelta(hours=5, minutes=30))).date()
 
 
+def legacy_options(day):
+    month = day.strftime("%b").upper()
+    archive = f"https://archives.nseindia.com/content/historical/DERIVATIVES/{day:%Y}/{month}/fo{day.strftime('%d%b%Y').upper()}bhav.csv.zip"
+    try:
+        with urllib.request.urlopen(archive, timeout=22) as response:
+            zipped = zipfile.ZipFile(io.BytesIO(response.read()))
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return []
+        raise
+    url = f"https://archives.nseindia.com/content/indices/ind_close_all_{day:%d%m%Y}.csv"
+    with urllib.request.urlopen(url, timeout=22) as response:
+        indices = csv.DictReader(io.StringIO(response.read().decode("utf-8-sig")))
+        spot = next(row["Closing Index Value"] for row in indices
+                    if row["Index Name"].strip().upper() == "NIFTY 50"
+                    and row["Index Date"] == day.strftime("%d-%m-%Y"))
+    rows = []
+    with zipped.open(zipped.namelist()[0]) as stream:
+        for row in csv.DictReader(io.TextIOWrapper(stream)):
+            if row["INSTRUMENT"] != "OPTIDX" or row["SYMBOL"] != "NIFTY":
+                continue
+            if row["TIMESTAMP"].upper() != day.strftime("%d-%b-%Y").upper():
+                raise ValueError("Exchange date mismatch")
+            expiry = dt.datetime.strptime(row["EXPIRY_DT"], "%d-%b-%Y").date()
+            # NSE FAOP47854 and FAOP61415. This reader covers November 2021 to July 2024.
+            lot = 50 if day < dt.date(2024, 4, 26) else 25
+            rows.append(dict(XpryDt=str(expiry), OptnTp=row["OPTION_TYP"], StrkPric=row["STRIKE_PR"],
+                             TtlTradgVol=row["CONTRACTS"], ClsPric=row["CLOSE"], OpnPric=row["OPEN"],
+                             NewBrdLotQty=lot, UndrlygPric=spot))
+    return rows or None
+
+
 def report(day):
+    if day < dt.date(2024, 7, 8):
+        try:
+            return legacy_options(day)
+        except (OSError, ValueError, KeyError, StopIteration, zipfile.BadZipFile):
+            return None
     url = f"https://nsearchives.nseindia.com/content/fo/BhavCopy_NSE_FO_0_0_0_{day:%Y%m%d}_F_0000.csv.zip"
     try:
         with urllib.request.urlopen(url, timeout=22) as response:
@@ -32,7 +69,9 @@ def report(day):
 
 def trades(day, prior, current):
     expiry = min(r["XpryDt"] for r in current)
-    fills = {r["FinInstrmId"]: r for r in current}
+    def contract(r):
+        return r["XpryDt"], float(r["StrkPric"]), r["OptnTp"]
+    fills = {contract(r): r for r in current}
     result = []
     for side in ("CE", "PE"):
         candidates = [r for r in prior if r["XpryDt"] == expiry and r["OptnTp"] == side
@@ -47,7 +86,7 @@ def trades(day, prior, current):
                 return (abs(float(r["ClsPric"]) - cap) if cap else
                         abs(float(r["StrkPric"]) - float(r["UndrlygPric"])), float(r["StrkPric"]))
             selected = min(pool, key=distance)
-            r = fills.get(selected["FinInstrmId"])
+            r = fills.get(contract(selected))
             if not r or float(r["TtlTradgVol"]) <= 0:
                 continue
             op, cl = float(r["OpnPric"]), float(r["ClsPric"])
@@ -59,8 +98,7 @@ def trades(day, prior, current):
 
 if __name__ == "__main__":
     history = json.loads(OUT.read_text()) if OUT.exists() else {}
-    # UDiFF files include the underlying close and actual contract lot.
-    inception = dt.date(2024, 7, 8)
+    inception = dt.date(2021, 11, 1)
     oldest = min((dt.date.fromisoformat(d) for d in history), default=TODAY)
     batch = int(os.environ.get("HISTORY_BACKFILL_DAYS", "32"))
     intervals = [(max(inception, oldest - dt.timedelta(days=batch + 8)), oldest),
