@@ -21,6 +21,7 @@ jobs:
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           python3 -m pip install openpyxl
+          python3 historical.py
           python3 sync_caps.py
           python3 sync_contracts.py
           git add dist/market/*.json

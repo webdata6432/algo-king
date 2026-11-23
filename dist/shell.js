@@ -1,5 +1,6 @@
 const h=React.createElement;
 const menuPaths={
+ historical:'M3 18V5m0 13h18M6 14l4-5 4 2 6-7',
  contact:'M3 5h18v14H3z M3 6l9 7 9-7',
  market:'M3 18V7m6 11v-6m6 6V4m6 14v-8',
  test:'M8 3h8m-6 0v7l-6 9q-1 2 2 2h12q3 0 2-2l-6-9V3m-6 13h8',
