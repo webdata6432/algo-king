@@ -140,6 +140,25 @@ Deno.serve(async req=>{
       if(saveError)throw saveError;
       return reply({rows,unavailable});
     }
+    if(["expiredDates","expiredChain","expiredBars"].includes(body.action)){
+      if(!cfg.token)return reply({error:"Connect FYERS to load expired contracts."},409);
+      const {action,symbol,from,to,expiry}=body,dates=action==="expiredDates",chain=action==="expiredChain";
+      const index=symbol==="NIFTY"?"NSE:NIFTY50-INDEX":symbol==="SENSEX"?"BSE:SENSEX-INDEX":"";
+      const valid=(d:unknown)=>typeof d==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(d)&&Number.isFinite(Date.parse(d));
+      if((dates||chain)?!index:typeof symbol!=="string"||!/^(NSE:NIFTY|BSE:SENSEX)[0-9A-Z.]+(PE|CE)$/.test(symbol))return reply({error:"Invalid option symbol"},400);
+      if(chain?!valid(expiry):(!valid(from)||!valid(to)||from>to||Date.parse(to)-Date.parse(from)>(dates?365:99)*86400000))return reply({error:"Invalid historical date range"},400);
+      const args=new URLSearchParams({symbol:index||symbol});
+      if(chain)args.set("expiry_date",expiry);
+      else{args.set("range_from",from);args.set("range_to",to);args.set("date_format","1");if(!dates)args.set("resolution","1")}
+      const path=dates?"expiry-dates":chain?"underlying-symbols":"historical-data";
+      const res=await fetch("https://api-t1.fyers.in/data/history/fno/expired/"+path+"?"+args,{headers:{Authorization:cfg.id+":"+cfg.token},signal:AbortSignal.timeout(16000)});
+      const data=await res.json();
+      if(res.status===401||[-8,-15,-16,-17,-99].includes(data.code))throw Error("AUTH");
+      if(res.status===429||data.code===429)throw Error("RATE");
+      if(!dates&&!chain&&data.s==="no_data")return reply({candles:[]});
+      if(!res.ok||data.s!=="ok")return reply({error:"FYERS expired option history unavailable. Check historical data access in your FYERS plan."},409);
+      return reply(dates?{dates:data.data.expiry_dates}:chain?{symbols:data.data.contracts.options}:{candles:data.candles});
+    }
     if((body.action==="stockQuotes"||body.action==="depth")&&cfg.token){
       const symbols=body.symbols;
       const indices:Record<string,string>={"NIFTY 50":"NSE:NIFTY50-INDEX",SENSEX:"BSE:SENSEX-INDEX",BANKNIFTY:"NSE:NIFTYBANK-INDEX","NIFTY MIDCAP 100":"NSE:NIFTYMIDCAP100-INDEX"};
@@ -155,12 +174,14 @@ Deno.serve(async req=>{
       const params=depth?new URLSearchParams({symbol:tickers,ohlcv_flag:"1"}):new URLSearchParams({symbols:tickers});
       const res=await fetch("https://api-t1.fyers.in/data/"+(depth?"depth":"quotes")+"?"+params,{headers:{Authorization:cfg.id+":"+cfg.token},signal:AbortSignal.timeout(9000)});
       const result=await res.json();
+      if(res.status===401||[-8,-15,-16,-17,-99].includes(result.code))throw Error("AUTH");
+      if(res.status===429||result.code===429)throw Error("RATE");
       if(!res.ok||result.s!=="ok")return reply({error:"FYERS could not supply this feed. Check the symbol and your FYERS session."},409);
       if(depth){
         const d=result.d?.[tickers];
-        if(!d||d.s==="error"||(!Array.isArray(d.bids)&&!Array.isArray(d.ask)))return reply({error:"No order book available for this stock."},404);
+        if(!d||d.s==="error"||(!Array.isArray(d.bids)&&!Array.isArray(d.ask)&&!Array.isArray(d.asks)))return reply({error:"No order book available for this stock."},404);
         const levels=(items:any[])=>Array.isArray(items)?items.filter(x=>Number.isFinite(x.price)&&x.price>0&&Number.isFinite(x.volume)&&x.volume>0).map(x=>({price:x.price,quantity:x.volume,orders:x.ord??null})):[];
-        return reply({symbol:symbols[0],price:d.ltp,time:Number(d.ltt||0)*1000,bids:levels(d.bids),asks:levels(d.ask),received:Date.now()});
+        return reply({symbol:symbols[0],price:d.ltp,time:Number(d.ltt||0)*1000,bids:levels(d.bids),asks:levels(d.ask??d.asks),received:Date.now()});
       }
       const quotes=(result.d||[]).filter((x:any)=>instruments.has(x.n)&&x.s==="ok"&&x.v?.lp>0).map((x:any)=>({symbol:instruments.get(x.n),price:x.v.lp,open:x.v.open_price,prev:x.v.prev_close_price,time:Number(x.v.tt||0)*1000,source:"FYERS"}));
       return reply({quotes});
@@ -170,7 +191,7 @@ Deno.serve(async req=>{
       const indices:Record<string,string>={"NIFTY 50":"NSE:NIFTY50-INDEX",SENSEX:"BSE:SENSEX-INDEX",BANKNIFTY:"NSE:NIFTYBANK-INDEX","NIFTY MIDCAP 100":"NSE:NIFTYMIDCAP100-INDEX"};
       const aliases:Record<string,string>={GMRINFRA:"GMRAIRPORT",BIRLASOFT:"BSOFT"};
       const validDate=(s:unknown)=>typeof s==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&Number.isFinite(Date.parse(s))&&new Date(s).toISOString().slice(0,10)===s;
-      if(typeof symbol!=="string"||!(Object.hasOwn(indices,symbol)||/^[A-Z0-9&-]{1,32}$/.test(symbol))||!validDate(from)||!validDate(to)||to<from||Date.parse(to)-Date.parse(from)>6*86400000)return reply({error:"Check the stock and date range"},400);
+      if(typeof symbol!=="string"||!(Object.hasOwn(indices,symbol)||/^[A-Z0-9&-]{1,32}$/.test(symbol))||!validDate(from)||!validDate(to)||to<from||Date.parse(to)-Date.parse(from)>27*86400000)return reply({error:"Check the stock and date range"},400);
       const ticker=indices[symbol]||"NSE:"+(aliases[symbol]||symbol)+"-EQ";
       const params=new URLSearchParams({symbol:ticker,resolution:"1",date_format:"1",range_from:from,range_to:to,cont_flag:"1"});
       const response=await fetch("https://api-t1.fyers.in/data/history?"+params,{headers:{Authorization:cfg.id+":"+cfg.token},signal:AbortSignal.timeout(14000)});

@@ -143,9 +143,11 @@ function builderPage(){
  async function load(symbol,key,from,to){
   const id=JSON.stringify([symbol,key,from,to]);if(optionData.has(id))return optionData.get(id);
   const pending=(async()=>{let rows=[];
-   for(let start=Date.parse(from);start<=Date.parse(to);start+=7*86400000){
-    const a=new Date(start).toISOString().slice(0,10),b=new Date(Math.min(Date.parse(to),start+6*86400000)).toISOString().slice(0,10);
-    if(!key&&session&&Date.parse(a)<Date.now()-29*86400000){const history=await fyersRequest('history',{symbol,from:a,to:b}).catch(()=>null);if(history?.rows?.length){rows.push(...history.rows);continue}}
+   const brokerIndex=!key&&session&&Date.parse(from)<Date.now()-29*86400000;
+   const span=brokerIndex?28:7;
+   for(let start=Date.parse(from);start<=Date.parse(to);start+=span*86400000){
+    const a=new Date(start).toISOString().slice(0,10),b=new Date(Math.min(Date.parse(to),start+(span-1)*86400000)).toISOString().slice(0,10);
+    if(brokerIndex){const history=await fyersRequest('history',{symbol,from:a,to:b});rows.push(...history.rows);continue}
     const qs=new URLSearchParams({symbol,from:a,to:b,...(key?{contract:key}:{})});
     const res=await fetch(authOrigin+'/functions/v1/market-minute?'+qs),data=await res.json();
     if(!res.ok){if(key&&res.status===404)continue;throw Error(data.error||'Minute history unavailable')}
@@ -184,7 +186,7 @@ function builderPage(){
  if(limits.target||limits.stop)trades=applyAlgoTargets(trades,configs,common,limits);
  for(const t of trades)delete t.marks;
  let net=0,peak=0,dd=0,value=0;for(let t of trades){net+=t.net;peak=Math.max(peak,net);t.cum=net;t.dd=net-peak;dd=Math.min(dd,t.dd);value+=t.qty*t.ep;t.tip=t.d+' '+t.exit+' · '+t.s+' · Net ₹'+fmt(t.net)+' · Cumulative ₹'+fmt(net)}
- let p={...runs[0].p,limits,legs:runs.map(r=>r.p),s:configs.map(c=>c.p.s).join(' + '),id:configs.map(c=>c.p.id).join('|'),source:configs.map(c=>c.p.source).join(' / ')};
+ let p={...runs[0].p,limits,legs:runs.map(r=>r.p),s:configs.map(c=>c.p.s).join(' + '),id:configs.map(c=>c.p.id).join('|'),source:runs.map(r=>r.p.source).join(' / ')};
  const prices=configs.flatMap(c=>c.run?c.run.prices:[{name:c.p.s,bars:dailyOHLC(c.rows.filter(row=>row.d>=common.from&&row.d<=common.to))}]).filter(x=>x?.bars.length);
  lastRun={p,trades,prices,net,dd,ret:value?100*net/value:0,win:trades.length?100*trades.filter(t=>t.net>0).length/trades.length:0,skipped:[...new Set(runs.flatMap(r=>r.skipped))]};lastMonth='';$('runMessage').textContent=shared.size+' eligible basket sessions';showResults();
  }catch(err){$('results').replaceChildren();$('runMessage').textContent=err.message}};

@@ -41,21 +41,64 @@ async function premiumContract(chain,p,day,load){
  }
  return best;
 }
+const expiredRequests=new Map();
+function expiredRead(action,params){
+ const id=JSON.stringify([action,params]);
+ if(!expiredRequests.has(id)){
+  if(expiredRequests.size>=400)expiredRequests.delete(expiredRequests.keys().next().value);
+  expiredRequests.set(id,fyersRequest(action,params).catch(e=>{expiredRequests.delete(id);throw e}));
+ }
+ return expiredRequests.get(id);
+}
+function shiftDate(day,count){return new Date(Date.parse(day)+count*86400000).toISOString().slice(0,10)}
+function expiredContracts(symbol,expiry,names,monthly){
+ const dt=new Date(expiry+'T00:00Z'),yy=expiry.slice(2,4),mon=dt.getUTCMonth();
+ const prefix=(symbol==='NIFTY'?'NSE:NIFTY':'BSE:SENSEX')+yy;
+ const week=prefix+'123456789OND'[mon]+expiry.slice(8);
+ const month=prefix+['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][mon];
+ if(expiry<'2025-01-31'||expiry>'2026-12-31')throw Error('Historical lot size has not been verified for '+expiry);
+ const lot=symbol==='SENSEX'?20:expiry<='2025-12-30'?75:65;
+ return names.flatMap(name=>{
+  const start=[month,week].find(x=>name.startsWith(x));if(!start)return [];
+  const m=/^(\d+(?:\.\d+)?)(CE|PE)$/.exec(name.slice(start.length));
+  return m?[[name,name,expiry,+m[1],m[2],lot,monthly]]:[];
+ });
+}
 async function simulateOptions(p,common,load){
  const index=p.s==='NIFTY'?'NIFTY 50':p.s;
  const chain=(await optionChain()).filter(c=>c[0].startsWith(p.s+' '));
  const windowData=await compressedMarket('option-window').catch(()=>({}));
  const unpack=(d,b)=>b.map(([m,o,h,l,c])=>({d,m,o:o/100,h:h/100,l:l/100,c:c/100}));
  const cachedSpot=Object.keys(windowData).filter(k=>k.startsWith(p.s+'|')).map(k=>k.split('|')[1]).sort();
+ const longRange=Date.parse(common.from)<Date.now()-29*86400000;
+ const expiryMeta=new Map(),byExpiry=new Map();
+ if(longRange){
+  for(let a=common.from;a<=common.to;a=shiftDate(a,366)){
+   const b=[shiftDate(a,365),common.to].sort()[0];
+   const {dates}=await expiredRead('expiredDates',{symbol:p.s,from:a,to:b});
+   for(const d of dates.options)expiryMeta.set(d,dates.futures.includes(d));
+  }
+  const tail=shiftDate(common.to,35),today=new Date().toISOString().slice(0,10);
+  if(common.to<today){
+   const {dates}=await expiredRead('expiredDates',{symbol:p.s,from:shiftDate(common.to,1),to:tail<today?tail:today});
+   for(const d of dates.options)expiryMeta.set(d,dates.futures.includes(d));
+  }
+ }
  const recent=cachedSpot.filter(d=>d>=common.from&&d<=common.to);
  let spot;
  if(recent.length&&common.from>=cachedSpot[0]&&common.to<=cachedSpot.at(-1)){
    spot=recent.flatMap(d=>unpack(d,windowData[p.s+'|'+d]));
  }else{
-   try{spot=await load(index,null,common.from,common.to)}catch(err){if(!recent.length)throw err;spot=recent.flatMap(d=>unpack(d,windowData[p.s+'|'+d]));}
+   try{spot=await load(index,null,common.from,common.to)}catch(err){if(longRange||!recent.length)throw err;spot=recent.flatMap(d=>unpack(d,windowData[p.s+'|'+d]));}
  }
  const networkLoad=load;
  load=async(symbol,key,from,to)=>{
+   if(key&&/^(NSE:NIFTY|BSE:SENSEX)/.test(key)){
+     const expiry=byExpiry.get(key),a=[common.from,shiftDate(expiry,-60)].sort().at(-1);
+     const start=from<a?from:a,end=[expiry,common.to,shiftDate(start,99)].sort()[0];
+     const {candles}=await expiredRead('expiredBars',{symbol:key,from:start,to:end});
+     return candles.map(([t,o,h,l,c])=>{const ist=new Date(t*1000+19800000);return {d:ist.toISOString().slice(0,10),m:ist.getUTCHours()*60+ist.getUTCMinutes(),o,h,l,c}}).filter(r=>r.d>=from&&r.d<=to&&r.m>=555&&r.m<930&&0<r.l&&r.l<=Math.min(r.o,r.c)&&r.h>=Math.max(r.o,r.c)).sort((a,b)=>a.d.localeCompare(b.d)||a.m-b.m);
+   }
    if(key&&from===to){
      const contract=chain.find(r=>r[1]===key);
      const bars=contract&&windowData[contract[0]+'|'+from];
@@ -64,11 +107,43 @@ async function simulateOptions(p,common,load){
    return networkLoad(symbol,key,from,to);
  };
  const days=[...new Set(spot.map(r=>r.d))].sort(),opens=new Map(spot.filter(r=>r.m===p.entry).map(r=>[r.d,r.o]));
+ if(longRange){
+  const covered=new Set(days.map(d=>d.slice(0,7)));
+  for(let date=common.from.slice(0,7)+'-01';date<=common.to;){
+   const next=shiftDate(date,32).slice(0,7)+'-01';
+   if(common.from<=date&&shiftDate(next,-1)<=common.to&&!covered.has(date.slice(0,7)))
+     throw Error('Incomplete index history for '+date.slice(0,7)+'. Requested '+common.from+' to '+common.to+'.');
+   date=next;
+  }
+ }
  const candles=new Map(),trades=[],skipped=[];let busy='';
+ async function resolve(day,i){
+  let candidates=chain,terms=p;
+  if(longRange){
+   const placeholders=[...expiryMeta].map(([d,monthly])=>['','',d,0,p.cp,0,monthly]);
+   const all=[...placeholders,...chain];
+   const upcoming=[...new Set(all.map(c=>c[2]))].filter(d=>d>=day).sort();
+   const expiry=p.optionExpiry==='This week'?upcoming[0]:p.optionExpiry==='Next week'?upcoming[1]:eligibleOptions(all,p,day)[0]?.[2];
+   if(!expiry)return null;
+   terms={...p,optionExpiry:expiry};
+   if(expiryMeta.has(expiry)){
+    const {symbols}=await expiredRead('expiredChain',{symbol:p.s,expiry});
+    candidates=expiredContracts(p.s,expiry,symbols,expiryMeta.get(expiry));
+    if(!candidates.length)throw Error('FYERS returned no recognised option contracts for '+expiry);
+    for(const c of candidates)byExpiry.set(c[1],expiry);
+   }
+   const msg=document.getElementById('runMessage');if(msg)msg.textContent=p.s+' · '+day+' · session '+(i+1)+' / '+days.length;
+  }
+  return p.strikeMode.startsWith('Premium')?await premiumContract(candidates,terms,day,load):pickOption(candidates,terms,day,opens.get(day));
+ }
+ const prepared=new Map();
  for(const [i,day] of days.entries()){
   if(day<=busy)continue;
-  const contract=p.strikeMode.startsWith('Premium')?await premiumContract(chain,p,day,load):pickOption(chain,p,day,opens.get(day));
-  if(!contract){skipped.push(day);continue}
+  if(longRange && common.holding==='Intraday' && !p.strikeMode.startsWith('Premium') && !prepared.has(day)){
+   await Promise.all(days.slice(i,i+4).map(async(d,j)=>{const c=await resolve(d,i+j);const rows=c?await load(p.s,c[1],d,d):[];prepared.set(d,{c,rows})}));
+  }
+  const cached=prepared.get(day);prepared.delete(day);
+  const contract=cached?cached.c:await resolve(day,i);if(!contract){skipped.push(day);continue}
   const [name,key,expiry]=contract;
   let through=day;
   if(common.holding==='Positional'){
@@ -76,7 +151,7 @@ async function simulateOptions(p,common,load){
    else through=days[i+(common.holdDays??1)];
   }
   if(!through||through<day||through>expiry){skipped.push(day);continue}
-  const rows=await load(p.s,key,day,through);
+  const rows=cached?cached.rows:await load(p.s,key,day,through);
   if(!rows.some(r=>r.d===day)){skipped.push(day);continue}
   if(!candles.has(name))candles.set(name,new Map());
   for(const bar of dailyOHLC(rows))candles.get(name).set(bar.d,bar);
@@ -87,7 +162,7 @@ async function simulateOptions(p,common,load){
   else if(run.skipped.includes(day))skipped.push(day);
  }
  if(!trades.length)throw Error(p.s+' · No complete option fills for '+common.from+' to '+common.to+'. Available cached spot sessions: '+(cachedSpot.join(', ')||'none')+'. Check expiry, entry time and strike.');
- return {p:{...p,...common,source:'Index options · observed contract minute candles · index coverage '+(days[0]||'—')+' to '+(days.at(-1)||'—')},trades,skipped,prices:[...candles].map(([name,days])=>({name,bars:[...days.values()]}))};
+ return {p:{...p,...common,source:'Index options · observed contract minute candles · index coverage '+(days[0]||'—')+' to '+(days.at(-1)||'—')+' · '+trades.length+' fills / '+days.length+' observed index sessions'},trades,skipped,prices:[...candles].map(([name,days])=>({name,bars:[...days.values()]}))};
 }
 function applyAlgoTargets(trades,configs,common,limits){
  const groups=new Map(),output=[];
