@@ -143,12 +143,14 @@ async function archivedMinutes(instrument,from,to){
   months.push(month);
   const next=new Date(month+'-01T00:00:00Z');next.setUTCMonth(next.getUTCMonth()+1);month=next.toISOString().slice(0,7);
  }
- const links=months.length>1?(await fyersRequest("minuteLinks",{instrument,month:months[0],months})).links:{};
+ let pendingLinks;
+ const monthLinks=()=>pendingLinks||=(months.length>1?fyersRequest("minuteLinks",{instrument,month:months[0],months}).then(r=>r.links):Promise.resolve({}));
  const result=early,missing=[];
  for(let i=0;i<months.length;i+=4){
   const chunks=await Promise.all(months.slice(i,i+4).map(async month=>{
    const key=JSON.stringify(['minuteMonth',instrument,month]),ttl=month===new Date(Date.now()+19800000).toISOString().slice(0,7)?60000:86400000;
    return cachedRead(key,ttl,()=>savedMarketRead(key,ttl,async()=>{
+    const links=await monthLinks();
     if(links[month]){
      try{
       const response=await fetch(links[month]);if(!response.ok)throw Error();
@@ -161,9 +163,12 @@ async function archivedMinutes(instrument,from,to){
   }));
   for(const [j,chunk] of chunks.entries()){
    const month=months[i+j];
-   if(!chunk.candles.length&&from<=month+'-01'&&to.slice(0,7)>month)missing.push(month);
+   const endOfMonth=new Date(Date.UTC(+month.slice(0,4),+month.slice(5),0)).toISOString().slice(0,10);
+   if(!chunk.candles.length&&from<=month+'-01'&&endOfMonth<=to)missing.push(month);
+   let tradingDay=-1,d;
    for(const [epoch,o,h,l,c] of chunk.candles){
-    const d=new Date(epoch*60000+19800000).toISOString().slice(0,10);
+    const day=Math.floor((epoch+330)/1440);
+    if(day!==tradingDay){tradingDay=day;d=new Date(day*86400000).toISOString().slice(0,10)}
     if(d>=from&&d<=to)result.push({d,m:(epoch+330)%1440,o,h,l,c});
    }
   }

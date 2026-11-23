@@ -3,6 +3,7 @@ import csv
 import datetime as dt
 import io
 import json
+import os
 import pathlib
 import urllib.error
 import urllib.request
@@ -57,17 +58,44 @@ def trades(day, prior, current):
 
 
 if __name__ == "__main__":
-    days = sorted(TODAY - dt.timedelta(days=i) for i in range(36))
     history = json.loads(OUT.read_text()) if OUT.exists() else {}
-    prior = None
-    with ThreadPoolExecutor(max_workers=4) as workers:
-        for day, rows in zip(days, workers.map(report, days)):
-            if rows is None:
-                prior = None
-            elif rows:
-                if prior:
-                    history[str(day)] = trades(day, prior, rows)
-                prior = rows
+    # UDiFF files include the underlying close and actual contract lot.
+    inception = dt.date(2024, 7, 8)
+    oldest = min((dt.date.fromisoformat(d) for d in history), default=TODAY)
+    batch = int(os.environ.get("HISTORY_BACKFILL_DAYS", "32"))
+    intervals = [(max(inception, oldest - dt.timedelta(days=batch + 8)), oldest),
+                 (TODAY - dt.timedelta(days=12), TODAY)]
+    if intervals[0][1] >= intervals[1][0]:
+        intervals = [(intervals[0][0], TODAY)]
+    # Revisit failed publications, including the prior session needed for selection.
+    retry = [dt.date.fromisoformat(d) for d, rows in sorted(history.items()) if rows is None][:6]
+    for day in retry:
+        if not any(lo <= day <= hi for lo, hi in intervals):
+            intervals.append((max(inception, day-dt.timedelta(days=8)), day))
+    for start, end in intervals:
+        if start > end:
+            continue
+        days = [start + dt.timedelta(days=i) for i in range((end-start).days+1)]
+        prior = None
+        fetch_failed = False
+        with ThreadPoolExecutor(max_workers=6) as workers:
+            for day, rows in zip(days, workers.map(report, days)):
+                if rows is None:
+                    prior = None
+                    fetch_failed = True
+                    if day < TODAY:
+                        history.setdefault(str(day), None)
+                elif not rows:
+                    if history.get(str(day)) is None:
+                        history.pop(str(day), None)
+                else:
+                    if prior:
+                        history[str(day)] = trades(day, prior, rows)
+                    elif fetch_failed:
+                        history.setdefault(str(day), None)
+                    prior = rows
+                    fetch_failed = False
     if not any(history.values()):
         raise SystemExit("No verified historical trades")
     OUT.write_text(json.dumps(history, sort_keys=True, separators=(",", ":")) + "\n")
+    print(f"{len(history)} sessions: {min(history)} through {max(history)}")

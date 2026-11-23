@@ -12,7 +12,7 @@ contracts = {(expiry, strike, side): key for name, key, expiry, strike, side, *_
              json.loads((base / "contracts.json").read_text()) if name.startswith("NIFTY ")}
 jobs = {}
 for rows in json.loads((base / "historical.json").read_text()).values():
-    for day, _, side, expiry, strike, *_ in rows:
+    for day, _, side, expiry, strike, *_ in rows or []:
         tag = f"{day}/{expiry}/{strike:g}/{side}"
         key = contracts.get((expiry, strike, side))
         if key and tag not in archive:

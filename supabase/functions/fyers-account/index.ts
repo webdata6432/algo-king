@@ -62,6 +62,18 @@ Deno.serve(async req=>{
   if(req.method==="OPTIONS")return new Response(null,{headers});
   if(req.method!=="POST")return reply({error:"POST required"},405);
   try{
+    const worker=req.headers.get("x-worker-key");
+    if(worker){
+      if(!(await db.rpc("daily_worker_auth",{candidate:worker})).data)return reply({error:"Worker access required"},403);
+      const job=await req.json();
+      if(job.action!=="minuteMonth"||job.warm!==true)return reply({error:"Invalid archive job"},400);
+      const result=await minuteMonth(job);
+      if(result.ok){
+        const {count}=await result.clone().json();
+        if(count===0)await db.from("minute_fetch_queue").update({retry_at:new Date(Date.now()+7*86400000).toISOString()}).eq("instrument",job.instrument).eq("month",job.month);
+      }
+      return result;
+    }
     const bearer=req.headers.get("Authorization")?.match(/^Bearer (.+)$/i)?.[1];
     if(!bearer)return reply({error:"Unlock Algo King first"},401);
     const {data:{user}}=await db.auth.getUser(bearer);
