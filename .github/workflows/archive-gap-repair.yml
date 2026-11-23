@@ -3,7 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['.github/workflows/archive-gap-repair.yml', 'repair_archive.py']
+    paths: ['.github/workflows/archive-gap-repair.yml', 'repair_archive.py', 'supabase/functions/exchange-daily/**']
   schedule:
     - cron: '35 10 * * *'
     - cron: '15 15 * * *'

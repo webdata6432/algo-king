@@ -9,8 +9,8 @@ Deno.serve(async req=>{
  try{
   const bearer=req.headers.get("authorization")?.replace(/^Bearer /,"")||"";
   const {payload}=await jwtVerify(bearer,githubKeys,{issuer:"https://token.actions.githubusercontent.com",audience:"algo-king-daily",algorithms:["RS256"]});
-  if(payload.sub!=="repo:webdata6432/algo-king:ref:refs/heads/main"||payload.workflow_ref!=="webdata6432/algo-king/.github/workflows/archive-gap-repair.yml@refs/heads/main"||!["push","schedule","workflow_dispatch"].includes(String(payload.event_name)))throw Error();
- }catch{return new Response(null,{status:403})}
+  if(payload.repository!=="webdata6432/algo-king"||payload.ref!=="refs/heads/main"||payload.workflow_ref!=="webdata6432/algo-king/.github/workflows/archive-gap-repair.yml@refs/heads/main"||!["push","schedule","workflow_dispatch"].includes(String(payload.event_name)))throw Error("Unexpected workflow identity");
+ }catch(err){console.error("Workflow authentication",err instanceof Error?err.message:"denied");return new Response(null,{status:403})}
  const today=new Date(Date.now()+19800000).toISOString().slice(0,10);
  if(action==="list"){
   const queued=await db.from("exchange_reports").upsert({day:today},{onConflict:"day",ignoreDuplicates:true});
