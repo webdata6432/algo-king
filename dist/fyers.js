@@ -21,7 +21,7 @@ async function savedMarketRead(key,ttl,read){
   }
  }catch{store=null}
  const data=await read();
- if(store && (data.candles?.length||data.rows?.length||data.bars?.length||data.stocks?.length)&&!data.pending){
+ if(store && (data.candles?.length||data.rows?.length||data.bars?.length||data.stocks?.length||data.chunks&&Object.keys(data.chunks).length)&&!data.pending){
   try{
    await store.put(url,new Response(JSON.stringify(data),{headers:{'content-type':'application/json','x-saved-at':String(Date.now())}}));
    const keys=await store.keys();
@@ -143,14 +143,31 @@ async function archivedMinutes(instrument,from,to){
   months.push(month);
   const next=new Date(month+'-01T00:00:00Z');next.setUTCMonth(next.getUTCMonth()+1);month=next.toISOString().slice(0,7);
  }
- let pendingLinks;
- const monthLinks=()=>pendingLinks||=(months.length>1?fyersRequest("minuteLinks",{instrument,month:months[0],months}).then(r=>r.links):Promise.resolve({}));
+ let pendingSources;
+ function sources(){
+  if(!pendingSources){
+   pendingSources=months.length<2?Promise.resolve({links:{},packs:{}}):fyersRequest('minuteLinks',{instrument,month:months[0],months}).then(({links,yearLinks={}})=>{
+    const packs={};
+    for(const [year,{end,url}] of Object.entries(yearLinks)){
+     const key=JSON.stringify(['year-archive',instrument,end]),ttl=86400000;
+     packs[year]=cachedRead(key,ttl,()=>savedMarketRead(key,ttl,async()=>{
+      const r=await fetch(url);if(!r.ok)throw Error('Year archive unavailable');
+      return new Response(r.body.pipeThrough(new DecompressionStream('gzip'))).json();
+     })).catch(()=>null);
+    }
+    return {links,packs};
+   });
+  }
+  return pendingSources;
+ }
  const result=early,missing=[];
  for(let i=0;i<months.length;i+=4){
   const chunks=await Promise.all(months.slice(i,i+4).map(async month=>{
    const key=JSON.stringify(['minuteMonth',instrument,month]),ttl=month===new Date(Date.now()+19800000).toISOString().slice(0,7)?60000:86400000;
    return cachedRead(key,ttl,()=>savedMarketRead(key,ttl,async()=>{
-    const links=await monthLinks();
+    const {links,packs}=await sources();
+    const year=await packs[month.slice(0,4)];
+    if(year?.chunks?.[month]?.length)return {candles:year.chunks[month]};
     if(links[month]){
      try{
       const response=await fetch(links[month]);if(!response.ok)throw Error();

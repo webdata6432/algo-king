@@ -35,12 +35,39 @@ async function minuteMonth(body:any){
  const indices=["NSE_INDEX|Nifty 50","BSE_INDEX|SENSEX","NSE_INDEX|Nifty Bank","NSE_INDEX|NIFTY MIDCAP 100"];
  if(typeof instrument!=="string"||(!indices.includes(instrument)&&!/^NSE_EQ\|[A-Z0-9]{12}$/.test(instrument))||!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))return reply({error:"Invalid instrument or month"},400);
  const now=new Date(Date.now()+19800000),today=now.toISOString().slice(0,10),current=today.slice(0,7);
+ const safe=instrument.replace(/[^A-Za-z0-9]/g,"_");
+ const yearFolder="yearly/"+safe;
+ if(body.action==="minuteYear"){
+  const yr=month.slice(0,4);
+  const last=yr===current.slice(0,4)?now.getUTCMonth():12;
+  if(yr<"2022"||yr>current.slice(0,4)||last<1)return reply({error:"No completed months for this year"},422);
+  const through=yr+"-"+String(last).padStart(2,"0"),path=yearFolder+"/"+through+".gz";
+  const existing=await minuteStore.list(yearFolder,{search:through+".gz",limit:1});
+  if(existing.data?.some(f=>f.name===through+".gz"))return reply({through,ready:true});
+  const chunks:Record<string,number[][]>={};
+  for(let i=1;i<=last;i+=3){
+   const months=Array.from({length:Math.min(3,last+1-i)},(_,j)=>yr+"-"+String(i+j).padStart(2,"0"));
+   const packs=await Promise.all(months.map(m=>archiveRead("spot/"+safe+"/"+m+".gz")));
+   if(packs.some(pack=>!pack?.final||!pack.rows?.length))return reply({through,ready:false});
+   months.forEach((m,j)=>chunks[m]=packs[j].rows);
+  }
+  await archiveWrite(path,{chunks});
+  return reply({through,ready:true});
+ }
  if(body.action==="minuteLinks"){
   if(!Array.isArray(body.months)||body.months.length>72||!body.months.every((m:string)=>/^\d{4}-(0[1-9]|1[0-2])$/.test(m)))return reply({error:"Invalid archive months"},400);
   const prefix="spot/"+instrument.replace(/[^A-Za-z0-9]/g,"_")+"/";
   const paths=body.months.filter((m:string)=>m<current).map((m:string)=>prefix+m+".gz");
-  const links=paths.length?await minuteStore.createSignedUrls(paths,900):null;
-  return reply({links:Object.fromEntries((links?.data||[]).filter(x=>x.signedUrl&&!x.error&&x.path).map(x=>[x.path!.slice(-10,-3),x.signedUrl]))});
+  const [links,listed]=await Promise.all([paths.length?minuteStore.createSignedUrls(paths,900):null,minuteStore.list(yearFolder,{limit:100,sortBy:{column:"name",order:"desc"}})]);
+  const ends:Record<string,string>={};
+  for(const f of listed.data||[]){
+   const end=f.name.slice(0,7),yr=end.slice(0,4);
+   if(!ends[yr]&&/^\d{4}-\d{2}\.gz$/.test(f.name)&&body.months.filter((m:string)=>m.startsWith(yr+"-")&&m<=end).length>=4)ends[yr]=end;
+  }
+  const years=Object.values(ends);
+  const signatures=years.length?await minuteStore.createSignedUrls(years.map(end=>yearFolder+"/"+end+".gz"),900):null;
+  const yearLinks=Object.fromEntries((signatures?.data||[]).filter(x=>x.path&&x.signedUrl&&!x.error).map(x=>{const end=x.path!.slice(-10,-3);return [end.slice(0,4),{end,url:x.signedUrl}]}));
+  return reply({yearLinks,links:Object.fromEntries((links?.data||[]).filter(x=>x.signedUrl&&!x.error&&x.path).map(x=>[x.path!.slice(-10,-3),x.signedUrl]))});
  }
  if(month<"2022-01"||month>current)return reply({error:"Minute history starts January 2022. Choose an available month."},422);
  const from=month+"-01",end=new Date(Date.UTC(+month.slice(0,4),+month.slice(5),0)).toISOString().slice(0,10),to=end<today?end:today;
@@ -79,7 +106,7 @@ Deno.serve(async req=>{
     const {data:{user}}=await db.auth.getUser(bearer);
     if(!user?.email_confirmed_at||user.email?.toLowerCase()!=="webdata6432@gmail.com")return reply({error:"Owner access required"},403);
     const body=await req.json(),table=db.from("fyers_connections"),uid=user.id;
-    if(body.action==="minuteMonth"||body.action==="minuteLinks")return await minuteMonth(body);
+    if(body.action==="minuteMonth"||body.action==="minuteLinks"||body.action==="minuteYear")return await minuteMonth(body);
     // Read durable expired-contract data before checking today's broker login.
     if(["expiredBars","expiredChain","expiredDates"].includes(body.action)){
       const historicalDates=body.action==="expiredDates"&&typeof body.to==="string"&&body.to<new Date(Date.now()-86400000).toISOString().slice(0,10);
