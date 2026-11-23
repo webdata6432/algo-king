@@ -2,31 +2,68 @@ async function historicalBacktest() {
   const page = document.createElement('section');
   page.className = 'panel';
   document.getElementById('app').replaceChildren(page);
-  page.innerHTML = '<h1>Historical Backtest</h1><p>NIFTY weekly options · NSE F&O daily reports</p><label>Lots <input type="number" min="1" step="1" value="1"></label><div class="historyResults" aria-live="polite">Loading results…</div>';
-  const lots = page.querySelector('input');
-  const output = page.querySelector('.historyResults');
-  const money = n => n.toLocaleString('en-IN', {style:'currency',currency:'INR',maximumFractionDigits:2});
-  const date = s => s.split('-').reverse().join('-');
+  page.textContent = 'Loading historical trades…';
   try {
-    const response = await fetch('market/historical.json');
-    if (!response.ok) throw Error();
-    const archive = await response.json();
-    const sessions = Object.keys(archive).sort();
-    const all = sessions.flatMap(d => archive[d]);
-    const strategies = [['S1','ATM','CE','Sell'],['S2','ATM','PE','Sell'],['S3a','ATM','CE','Buy'],['S3b','ATM','PE','Buy'],['S4a','Under 200','CE','Sell'],['S4b','Under 200','PE','Sell'],['S5a','Near 300','CE','Sell'],['S5b','Near 300','PE','Sell']];
-    function render() {
-      const qty = lots.valueAsNumber;
-      if (!Number.isSafeInteger(qty) || qty < 1) {output.textContent='Enter a positive whole number of lots.';return;}
-      const lines = strategies.map(([id,rule,side,action]) => {
-        const rows = all.filter(r=>r[1]===rule && r[2]===side);
-        const pnl = r => (action==='Buy'?1:-1)*(r[6]-r[5])*r[7]*qty;
-        const results = rows.map(pnl);
-        const log = rows.slice().reverse().map(r=>'<tr>'+[date(r[0]),date(r[3]),r[4],r[7],r[5],r[6],money(pnl(r))].map(c=>'<td>'+c+'</td>').join('')+'</tr>').join('');
-        return '<tr><td><details><summary>'+id+' · '+action+' '+side+' · '+rule+'</summary><table><thead><tr><th>Date</th><th>Expiry</th><th>Strike</th><th>Units/lot</th><th>Open</th><th>Close</th><th>Gross P&L</th></tr></thead><tbody>'+log+'</tbody></table></details></td><td>'+rows.length+'</td><td>'+results.filter(n=>n>0).length+'</td><td>'+money(results.reduce((a,b)=>a+b,0))+'</td><td>'+(rows.length?money(Math.max(...results)):'—')+'</td><td>'+(rows.length?money(Math.min(...results)):'—')+'</td></tr>';
-      });
-      output.innerHTML='<p>'+date(sessions[0])+' – '+date(sessions.at(-1))+' · '+sessions.length+' evaluated sessions</p><div style="overflow:auto"><table><thead><tr><th>Strategy / trade log</th><th>Trades</th><th>Wins</th><th>Total gross P&L</th><th>Best trade</th><th>Worst trade</th></tr></thead><tbody>'+lines.join('')+'</tbody></table></div><p>Strikes use the previous session’s close. ATM uses the nearest strike to NIFTY. Under ₹200 uses the closest lower premium and skips an opening premium of ₹200 or more. Near ₹300 selects the closest closing premium. Each model enters at the published open and exits at the published close. Premium changes include market moves and volatility. Gross results exclude fees and slippage.</p>';
+    async function read(url) {
+      const res = await fetch(url);
+      if (!res.ok) throw Error();
+      return res.json();
     }
-    lots.addEventListener('input',render);
-    render();
-  } catch {output.textContent='Historical results could not be loaded. Reopen this page to retry.';}
+    const [archive, minutes] = await Promise.all([read('market/historical.json'), read('market/historical-minutes.json')]);
+    const days = Object.keys(archive).sort();
+    const end = days.at(-1);
+    const strategies = [['S1','ATM','CE','Sell'],['S2','ATM','PE','Sell'],['S3a','ATM','CE','Buy'],['S3b','ATM','PE','Buy'],['S4a','Under 200','CE','Sell'],['S4b','Under 200','PE','Sell'],['S5a','Near 300','CE','Sell'],['S5b','Near 300','PE','Sell']];
+    page.innerHTML = '<h1>Historical Backtest</h1><div class="fields"><label>Period<select name="period">'+['7D','15D','30D','1Y','Custom'].map(x=>'<option '+(x==='30D'?'selected':'')+'>'+x+'</option>').join('')+'</select></label><label>From<input type="date" name="from"></label><label>To<input type="date" name="to"></label><label>Session<select name="mode"><option>Open to close</option><option>Custom time</option></select></label><label hidden>Entry · IST<input name="entry" type="time" value="09:30"></label><label hidden>Exit · IST<input name="exit" type="time" value="15:15"></label><label>Lots<input name="lots" type="number" min="1" step="1" value="1"></label><label>Strategy<select name="strategy">'+strategies.map(([id,rule,side,act],i)=>'<option value="'+i+'">'+id+' · '+act+' '+side+' · '+rule+'</option>').join('')+'</select></label></div><div class="historyResults" aria-live="polite"></div>';
+    const field = name=>page.querySelector('[name="'+name+'"]');
+    const output = page.querySelector('.historyResults');
+    function period() {
+      if(field('period').value==='Custom')return;
+      const n = ({'7D':7,'15D':15,'30D':30,'1Y':365})[field('period').value];
+      field('from').value=new Date(Date.parse(end)-(n-1)*86400000).toISOString().slice(0,10);
+      field('to').value=end;
+    }
+    const money=n=>'₹'+fmt(n);
+    function render() {
+      const custom=field('mode').value==='Custom time';
+      for(const name of ['entry','exit'])field(name).parentElement.hidden=!custom;
+      const lots=field('lots').valueAsNumber;
+      const entry=field('entry').value, exit=field('exit').value;
+      const from=field('from').value,to=field('to').value;
+      if(!Number.isSafeInteger(lots)||lots<1||!from||!to||from>to||(custom&&(!entry||!exit||entry<'09:15'||exit>'15:29'||entry>=exit))){
+        output.textContent='Check the dates, whole lots and entry before exit (09:15–15:29 IST).';return;
+      }
+      const [,rule,side,action]=strategies[+field('strategy').value];
+      const dates=days.filter(d=>d>=from&&d<=to);
+      const trades=[];let cum=0,peak=0,drawdown=0,missing=0;
+      for(const day of dates){
+        const row=archive[day].find(r=>r[1]===rule&&r[2]===side);
+        if(!row)continue;
+        const [,,,expiry,strike,open,close,unit]=row;
+        let ep=open,xp=close;
+        if(custom){
+          const bars=minutes[[day,expiry,strike,side].join('/')];
+          ep=bars?.[toMin(entry)-555]/100;xp=bars?.[toMin(exit)-555]/100;
+          if(!(ep>0&&xp>0)){missing++;continue;}
+          if(rule==='Under 200'&&ep>=200)continue;
+        }
+        const qty=lots*unit, gross=(action==='Buy'?1:-1)*(xp-ep)*qty;
+        const charges=costs({fees:feeSchedule,side:action,qty},ep,xp),net=gross-charges;
+        cum+=net;peak=Math.max(peak,cum);drawdown=Math.max(drawdown,peak-cum);
+        trades.push({d:day,expiry,strike,qty,ep,xp,gross,charges,net,cum,id:trades.length+1,exit:custom?exit:'Close'});
+      }
+      const coverage='<p>NSE daily archive '+days[0]+' to '+end+' · '+dates.length+' archived sessions in range'+(custom?' · '+missing+' qualifying setups missing exact Upstox candles':'')+'</p>';
+      if(!trades.length){output.innerHTML=coverage+'<p>No verified fills for this selection.</p>';return;}
+      const nets=trades.map(t=>t.net),wins=nets.filter(n=>n>0).length;
+      const metrics=[['Net P&L',money(cum)],['Max drawdown',money(drawdown)],['Best trade',money(Math.max(...nets))],['Worst trade',money(Math.min(...nets))],['Win rate',(100*wins/trades.length).toFixed(1)+'%'],['Wins / trades',wins+' / '+trades.length],['Total charges',money(trades.reduce((sum,t)=>sum+t.charges,0))]];
+      const headings=['ID','Date','Contract','Qty','Entry IST','Entry ₹','Exit IST','Exit ₹','Gross','Charges','Net P&L','Total P&L'];
+      const rows=trades.slice().reverse().map(t=>'<tr>'+['T/'+t.id,t.d,t.strike+' '+side+' · '+t.expiry,t.qty,custom?entry:'Open',fmt(t.ep),t.exit,fmt(t.xp),money(t.gross),money(t.charges),money(t.net),money(t.cum)].map(x=>'<td>'+x+'</td>').join('')+'</tr>').join('');
+      output.innerHTML=coverage+'<div class="fields">'+metrics.map(([k,v])=>'<div><small>'+k+'</small><h3>'+v+'</h3></div>').join('')+'</div>'+pnlChart(trades)+'<h3>Day-wise transaction details</h3><div style="overflow:auto"><table><thead><tr>'+headings.map(x=>'<th>'+x+'</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div><p>Nearest expiry and strike use the previous session’s close. Custom times use the traded minute’s opening premium. Charges use your backtester rates. Slippage excluded.</p>';
+    }
+    page.oninput=e=>{
+      if(e.target.name==='period')period();
+      if(['from','to'].includes(e.target.name))field('period').value='Custom';
+      render();
+    };
+    period();render();
+  } catch {page.textContent='Historical results could not be loaded. Reopen this page to retry.';}
 }
