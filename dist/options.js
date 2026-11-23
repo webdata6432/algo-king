@@ -44,7 +44,25 @@ async function premiumContract(chain,p,day,load){
 async function simulateOptions(p,common,load){
  const index=p.s==='NIFTY'?'NIFTY 50':p.s;
  const chain=(await optionChain()).filter(c=>c[0].startsWith(p.s+' '));
- const spot=await load(index,null,common.from,common.to);
+ const windowData=await compressedMarket('option-window').catch(()=>({}));
+ const unpack=(d,b)=>b.map(([m,o,h,l,c])=>({d,m,o:o/100,h:h/100,l:l/100,c:c/100}));
+ const cachedSpot=Object.keys(windowData).filter(k=>k.startsWith(p.s+'|')).map(k=>k.split('|')[1]).sort();
+ const recent=cachedSpot.filter(d=>d>=common.from&&d<=common.to);
+ let spot;
+ if(recent.length&&common.from>=cachedSpot[0]&&common.to<=cachedSpot.at(-1)){
+   spot=recent.flatMap(d=>unpack(d,windowData[p.s+'|'+d]));
+ }else{
+   try{spot=await load(index,null,common.from,common.to)}catch(err){if(!recent.length)throw err;spot=recent.flatMap(d=>unpack(d,windowData[p.s+'|'+d]));}
+ }
+ const networkLoad=load;
+ load=async(symbol,key,from,to)=>{
+   if(key&&from===to){
+     const contract=chain.find(r=>r[1]===key);
+     const bars=contract&&windowData[contract[0]+'|'+from];
+     if(bars)return unpack(from,bars);
+   }
+   return networkLoad(symbol,key,from,to);
+ };
  const days=[...new Set(spot.map(r=>r.d))].sort(),opens=new Map(spot.filter(r=>r.m===p.entry).map(r=>[r.d,r.o]));
  const candles=new Map(),trades=[],skipped=[];let busy='';
  for(const [i,day] of days.entries()){
@@ -68,7 +86,8 @@ async function simulateOptions(p,common,load){
   if(fill){trades.push({...fill,s:name,qty,marks:rows.filter(r=>r.d>=day&&r.d<=fill.d)});busy=fill.d}
   else if(run.skipped.includes(day))skipped.push(day);
  }
- return {p:{...p,...common,source:'Index options · observed contract minute candles'},trades,skipped,prices:[...candles].map(([name,days])=>({name,bars:[...days.values()]}))};
+ if(!trades.length)throw Error(p.s+' · No complete option fills for '+common.from+' to '+common.to+'. Available cached spot sessions: '+(cachedSpot.join(', ')||'none')+'. Check expiry, entry time and strike.');
+ return {p:{...p,...common,source:'Index options · observed contract minute candles · index coverage '+(days[0]||'—')+' to '+(days.at(-1)||'—')},trades,skipped,prices:[...candles].map(([name,days])=>({name,bars:[...days.values()]}))};
 }
 function applyAlgoTargets(trades,configs,common,limits){
  const groups=new Map(),output=[];

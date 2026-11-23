@@ -1,4 +1,4 @@
-async function historicalBacktest() {
+async function optionHistory(initial=0) {
   const page = document.createElement('section');
   page.className = 'panel';
   document.getElementById('app').replaceChildren(page);
@@ -70,9 +70,11 @@ async function historicalBacktest() {
           metrics.push([name+' · '+sample.length+' trades',sample.length?money(sample.reduce((s,t)=>s+t.net,0)):'—']);
         }
       }
-      const headings=['ID','Date','Contract','Qty','Entry IST','Entry ₹','Exit IST','Exit ₹','Gross',study?'Costs + slippage':'Charges','Net P&L','Total P&L'];
-      const rows=trades.slice().reverse().map(t=>'<tr>'+['T/'+t.id,t.d,t.strike+' '+t.contractSide+' · '+t.expiry,t.qty,custom?entry:'Open',fmt(t.ep),t.exit,fmt(t.xp),money(t.gross),money(t.charges),money(t.net),money(t.cum)].map(x=>'<td>'+x+'</td>').join('')+'</tr>').join('');
-      output.innerHTML=coverage+'<div class="fields">'+metrics.map(([k,v])=>'<div><small>'+k+'</small><h3>'+v+'</h3></div>').join('')+'</div>'+pnlChart(trades)+'<h3>Day-wise transaction details</h3><div style="overflow:auto"><table><thead><tr>'+headings.map(x=>'<th>'+x+'</th>').join('')+'</tr></thead><tbody>'+rows+'</tbody></table></div>'+(study?'<p>Third Wednesday each month. A rising Tuesday near-month NIFTY futures candle selects a short put; a falling candle selects a short call. R1 uses the strike nearest the futures close; R2 targets 1% OTM. R3 sells a 1% OTM put each scheduled session regardless of trend. Model fills use the published option open and close. Missing reports or untraded contracts skip that month. Estimated costs per lot: at least ₹60 plus two premium points of round-trip slippage.</p>':'<p>Nearest expiry and strike use the previous session’s close. Custom times use the traded minute’s opening premium. Charges use your backtester rates. Slippage excluded.</p>');
+      output.innerHTML=coverage+(study?note(metrics.slice(-2).map(([k,v])=>k+' '+v).join(' · ')):'')+'<div id="results"></div>';
+      const p={id:rule+side+action,s:rule+' '+side,side:action,from,to,source:custom?'Upstox · minute candles':'NSE F&O · open to close',stop:0,slip:0};
+      let high=0;
+      for(const t of trades){high=Math.max(high,t.cum);Object.assign(t,{dd:t.cum-high,entryDay:t.d,s:'NIFTY '+t.strike+' '+t.contractSide+' '+t.expiry,side:action,entry:custom?entry:'09:15',exit:custom?exit:'15:30',reason:custom?'Timed exit':'Session close'});}
+      lastMonth='';lastRun={p,trades,net:cum,dd:-drawdown,win:100*wins/trades.length,skipped:[]};showResults();
     }
     page.oninput=e=>{
       if(e.target.name==='strategy' && researchMode()){
@@ -82,6 +84,9 @@ async function historicalBacktest() {
       if(['from','to'].includes(e.target.name))field('period').value='Custom';
       render();
     };
+    field('strategy').value=String(initial);
+    if(researchMode())field('period').value='All history';
+    const back=document.createElement('button');back.textContent='← Strategy library';back.onclick=historicalBacktest;page.prepend(back);
     period();render();
   } catch {page.textContent='Historical results could not be loaded. Reopen this page to retry.';}
 }

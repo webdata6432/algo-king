@@ -145,7 +145,7 @@ function builderPage(){
   const pending=(async()=>{let rows=[];
    for(let start=Date.parse(from);start<=Date.parse(to);start+=7*86400000){
     const a=new Date(start).toISOString().slice(0,10),b=new Date(Math.min(Date.parse(to),start+6*86400000)).toISOString().slice(0,10);
-    if(!key&&session){const history=await fyersRequest('history',{symbol,from:a,to:b}).catch(()=>null);if(history?.rows?.length){rows.push(...history.rows);continue}}
+    if(!key&&session&&Date.parse(a)<Date.now()-29*86400000){const history=await fyersRequest('history',{symbol,from:a,to:b}).catch(()=>null);if(history?.rows?.length){rows.push(...history.rows);continue}}
     const qs=new URLSearchParams({symbol,from:a,to:b,...(key?{contract:key}:{})});
     const res=await fetch(authOrigin+'/functions/v1/market-minute?'+qs),data=await res.json();
     if(!res.ok){if(key&&res.status===404)continue;throw Error(data.error||'Minute history unavailable')}

@@ -95,3 +95,5 @@ header:has(.accountTools){width:100%;max-width:none;padding-right:clamp(8px,1vw,
  .optionRisk{grid-template-columns:1.25fr 1fr .58fr 1.65fr 1.65fr auto auto}
  .optionRow .riskPair,.optionRow label:has(.flipChoice),.optionDetails>label:first-child{grid-column:auto}
 }
+
+.basketCards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,205px),1fr));gap:.8rem}.basketCards button{display:grid;gap:.5rem;text-align:left;padding:1rem}.basketCards span{font-variant-numeric:tabular-nums}
