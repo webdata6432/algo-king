@@ -149,14 +149,20 @@ Deno.serve(async req=>{
       if(chain?!valid(expiry):(!valid(from)||!valid(to)||from>to||Date.parse(to)-Date.parse(from)>(dates?365:99)*86400000))return reply({error:"Invalid historical date range"},400);
       const args=new URLSearchParams({symbol:index||symbol});
       if(chain)args.set("expiry_date",expiry);
-      else{args.set("range_from",from);args.set("range_to",to);args.set("date_format","1");if(!dates)args.set("resolution","1")}
+      else{args.set("range_from",from);args.set("range_to",to);args.set("date_format","1");if(!dates){args.set("resolution","1");args.set("include_oi","0");args.set("include_greeks","0")}}
       const path=dates?"expiry-dates":chain?"underlying-symbols":"historical-data";
       const res=await fetch("https://api-t1.fyers.in/data/history/fno/expired/"+path+"?"+args,{headers:{Authorization:cfg.id+":"+cfg.token},signal:AbortSignal.timeout(16000)});
       const data=await res.json();
       if(res.status===401||[-8,-15,-16,-17,-99].includes(data.code))throw Error("AUTH");
       if(res.status===429||data.code===429)throw Error("RATE");
       if(!dates&&!chain&&data.s==="no_data")return reply({candles:[]});
-      if(!res.ok||data.s!=="ok")return reply({error:"FYERS expired option history unavailable. Check historical data access in your FYERS plan."},409);
+      if(!res.ok||data.s!=="ok"){
+        const message=[data.message,...Object.values(data.data||{})].filter(x=>typeof x==="string").join(" ").toLowerCase();
+        if(/requests\/day|daily limit/.test(message))return reply({error:"FYERS daily expired-history allowance reached. Completed downloads are cached on this device. Retry after the provider resets the quota."},429);
+        if(/rate limit|too many requests|per minute/.test(message))throw Error("RATE");
+        if(data.s==="error"&&/no data|data not available for.*range/.test(message)&&action==="expiredBars")return reply({candles:[]});
+        return reply({error:"FYERS "+action+" unavailable for "+symbol+" (HTTP "+res.status+", provider code "+Number(data.code||0)+"). "+[data.message,...["range_from","range_to","symbol","resolution","include_oi","include_greeks","date_format"].map(k=>data.data?.[k])].filter(x=>typeof x==="string").join(" · ").slice(0,350).replace(/[A-Za-z0-9_.=-]{30,}/g,"[redacted]")},409);
+      }
       return reply(dates?{dates:data.data.expiry_dates}:chain?{symbols:data.data.contracts.options}:{candles:data.candles});
     }
     if((body.action==="stockQuotes"||body.action==="depth")&&cfg.token){

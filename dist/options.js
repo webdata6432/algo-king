@@ -46,7 +46,27 @@ function expiredRead(action,params){
  const id=JSON.stringify([action,params]);
  if(!expiredRequests.has(id)){
   if(expiredRequests.size>=400)expiredRequests.delete(expiredRequests.keys().next().value);
-  expiredRequests.set(id,fyersRequest(action,params).catch(e=>{expiredRequests.delete(id);throw e}));
+  const request=async()=>{
+   // Only completed contract history is immutable enough to reuse after a reload.
+   const reusable=action==='expiredChain'||action==='expiredBars';
+   let cache,key;
+   if(reusable && globalThis.caches){
+    try{
+     cache=await caches.open('algo-king-expired-history-v1');
+     key=new URL('cached-history/'+encodeURIComponent(id),document.baseURI).href;
+     const hit=await cache.match(key);if(hit)return await hit.json();
+    }catch{cache=null}
+   }
+   const result=await fyersRequest(action,params);
+   if(cache && (result.symbols?.length||result.candles?.length)){
+    try{
+     await cache.put(key,new Response(JSON.stringify(result),{headers:{'Content-Type':'application/json'}}));
+     const keys=await cache.keys();if(keys.length>350)await cache.delete(keys[0]);
+    }catch{}
+   }
+   return result;
+  };
+  expiredRequests.set(id,request().catch(e=>{expiredRequests.delete(id);throw e}));
  }
  return expiredRequests.get(id);
 }
@@ -94,8 +114,8 @@ async function simulateOptions(p,common,load){
  const networkLoad=load;
  load=async(symbol,key,from,to)=>{
    if(key&&/^(NSE:NIFTY|BSE:SENSEX)/.test(key)){
-     const expiry=byExpiry.get(key),a=[common.from,shiftDate(expiry,-60)].sort().at(-1);
-     const start=from<a?from:a,end=[expiry,common.to,shiftDate(start,99)].sort()[0];
+     const expiry=byExpiry.get(key),monday=shiftDate(from,-((new Date(from).getUTCDay()+6)%7));
+     const start=[monday,common.from].sort().at(-1),end=[expiry,common.to,[shiftDate(monday,6),to].sort().at(-1)].sort()[0];
      const {candles}=await expiredRead('expiredBars',{symbol:key,from:start,to:end});
      return candles.map(([t,o,h,l,c])=>{const ist=new Date(t*1000+19800000);return {d:ist.toISOString().slice(0,10),m:ist.getUTCHours()*60+ist.getUTCMinutes(),o,h,l,c}}).filter(r=>r.d>=from&&r.d<=to&&r.m>=555&&r.m<930&&0<r.l&&r.l<=Math.min(r.o,r.c)&&r.h>=Math.max(r.o,r.c)).sort((a,b)=>a.d.localeCompare(b.d)||a.m-b.m);
    }
