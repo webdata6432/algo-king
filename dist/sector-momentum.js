@@ -100,6 +100,22 @@ function sectorMomentumPage(savedRun){
  const cfg=savedRun?.sectorConfig||{},to=cfg.to||completedDate();
  $('app').innerHTML=heading('Historical Backtest','NIFTY 500 sector momentum','At 09:30 IST, buy when more than half of observed stocks are up from the open. Sell when more than half are down. Take the five strongest moves on that side, one per sector.','<a href="#historical">Strategy library</a>')+'<form id="sectorForm" class="panel"><div class="fields">'+select('Dates','sectorPeriod',['7D','15D','30D','1Y','3Y','5Y','Custom'])+input('From','secFrom',cfg.from||presetStart(to,'7D'),'date')+input('Through','secTo',to,'date')+input('Entry · IST','secEntry',timeOf(cfg.entry??570),'time','min="09:30" max="15:28"')+input('Exit · IST','secExit',timeOf(cfg.exit??915),'time','max="15:29"')+'</div><div class="fields">'+input('Budget per stock ₹','secBudget',cfg.budget??20000,'number','min="1" step="any"')+input('Stop loss %','secStop',cfg.stop??1,'number','min=".01" max="99" step=".01"')+select('Risk : reward','secReward',['1:2','1:3'])+input('Estimated charges · bps per fill','secFee',cfg.fee??5,'number','min="0" step=".1"')+input('Slippage · bps per fill','secSlip',cfg.slip??5,'number','min="0" max="999" step=".1"')+'</div><p class="hint">Prices use the completed 09:15–09:30 opening candle, followed by one-minute execution. At least 95% of the historical basket must have opening prices. No majority or fewer than five sectors means no trade. Missing execution data marks the entire session incomplete. Historical membership uses published index-fund holdings until the official daily snapshots begin. Fees are editable estimates.</p><button class="primary">Run backtest</button><p role="status" id="sectorMsg"></p></form><div id="results"></div>';
  const form=$('sectorForm'),period=$('sectorPeriod');
+ if(!savedRun){
+  const card=document.createElement('section');card.className='panel';
+  card.innerHTML='<h2>Verified results</h2><div class="row"><button type="button">Open 1:2 result</button><button type="button">Open 1:3 result</button></div><p role="status"></p>';
+  form.before(card);
+  [...card.querySelectorAll('button')].forEach((btn,i)=>btn.onclick=async()=>{
+   btn.disabled=true;const status=card.querySelector('p');status.textContent='Opening saved report…';
+   try{
+    const run=await fyersRequest('verifiedSector',{rr:i+2});
+    if(!card.isConnected)return;
+    if(!run?.sectorConfig)throw Error('No verified report is available for this setting.');
+    sectorMomentumPage({sectorConfig:run.sectorConfig});
+    lastRun=run;lastMonth='';showResults();
+    $('sectorMsg').textContent=displayDates(run.p.from+' – '+run.p.to)+' · verified report · '+run.trades.length+' fills';
+   }catch(err){status.textContent=err.message}finally{btn.disabled=false}
+  });
+ }
  if(cfg.rr)$('secReward').value='1:'+cfg.rr;
  period.value=savedRun?'Custom':'7D';
  period.onchange=()=>{if(period.value!=='Custom')$('secFrom').value=presetStart($('secTo').value,period.value)};

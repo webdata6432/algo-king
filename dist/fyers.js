@@ -55,6 +55,7 @@ async function brokerRequest(action,details={}){
   if(session!==owner)throw Error('Reopen your workspace.');
   sessionChanged(refreshed);
  }
+ if(action==='verifiedSector')return accountRequest('/rest/v1/rpc/read_sector_report',{p_reward:details.rr},session.access_token);
  if(action==='openingBatch')return accountRequest('/functions/v1/basket-openings',details,session.access_token);
  if(action==='archiveRank'){
   const {from,to,cap,query,cut,limit}=details;
