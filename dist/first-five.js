@@ -1,8 +1,12 @@
 function firstFiveRun(model,from,to,budget){
+ return rankedBasketRun(model,from,to,budget,'first-five','NIFTY 500 · first five at ±2%','firstFive',false);
+}
+function rankedBasketRun(model,from,to,budget,id,title,settingsKey,requireAll){
  if(!from||from>to||from<model.first||to>model.last)throw Error('Choose dates inside the verified archive.');
  if(!(budget>0&&Number.isFinite(budget)))throw Error('Enter a positive budget per stock.');
  const days=model.sessions.filter(s=>from<=s.d&&s.d<=to),trades=[],selected=[];
  for(const day of days){
+  if(requireAll&&day.orders.some(order=>order.ep>budget))continue;
   for(const order of day.orders){
    const qty=Math.floor(budget/order.ep),sign=order.side==='Buy'?1:-1;
    selected.push({d:day.d,qty,...order});
@@ -20,7 +24,7 @@ function firstFiveRun(model,from,to,budget){
   peak=Math.max(net,peak);dd=Math.min(dd,net-peak);
   for(;i<j;i++){trades[i].cum=net;trades[i].dd=net-peak}
  }
- return {p:{id:'first-five',s:'NIFTY 500 · first five at ±2%',from,to,source:'Upstox minute candles · traded symbols checked against NSE daily reports',stop:1,stopUnit:'%',slip:5},firstFive:{from,to,budget},sessionDates:days.map(s=>s.d),skipped:days.filter(s=>s.missing).map(s=>s.d),selected,trades,net,dd,win:100*trades.filter(t=>t.net>0).length/(trades.length||1)};
+ return {p:{id,s:title,from,to,source:'Upstox minute candles · traded symbols checked against NSE daily reports',stop:1,stopUnit:'%',slip:5},[settingsKey]:{from,to,budget},sessionDates:days.map(s=>s.d),skipped:days.filter(s=>s.missing).map(s=>s.d),selected,trades,net,dd,win:100*trades.filter(t=>t.net>0).length/(trades.length||1)};
 }
 async function firstFivePage(savedRun){
  const app=$('app');
