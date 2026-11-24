@@ -76,6 +76,6 @@ function simulate(rows,p){
     }
     let xp=out*(1-sign*slip),gross=sign*(xp-ep)*p.qty,charges=costs(p,ep,xp),net=gross-charges;
     if(overnight&&fillDay!==d)busyUntil=fillDay;cum+=net;peak=Math.max(peak,cum);dd=Math.min(dd,cum-peak);
-    trades.push({d:fillDay,entryDay:d,entry:timeOf(a[0].m),exit:timeOf(m),ep,xp,gross,charges,net,cum,dd:cum-peak,reason,tip:fillDay+' '+timeOf(m)+' IST\nTrade ₹'+fmt(net)+'\nCumulative ₹'+fmt(cum)+'\nDrawdown ₹'+fmt(cum-peak)});
+    trades.push({d:fillDay,entryDay:d,entry:timeOf(a[0].m),exit:timeOf(m),ep,xp,entryRef:fill,slippageCost:sign*((out-fill)-(xp-ep))*p.qty,gross,charges,net,cum,dd:cum-peak,reason,tip:fillDay+' '+timeOf(m)+' IST\nTrade ₹'+fmt(net)+'\nCumulative ₹'+fmt(cum)+'\nDrawdown ₹'+fmt(cum-peak)});
   }return {trades,skipped,net:cum,dd,ret:trades.length?100*cum/trades.reduce((v,t)=>v+p.qty*t.ep,0):0,win:100*trades.filter(t=>t.net>0).length/(trades.length||1),p}
 }

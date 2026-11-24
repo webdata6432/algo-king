@@ -203,7 +203,7 @@ async function simulateOptions(p,common,load){
   }
  }
  if(!trades.length)throw Error(p.s+' · No complete option fills for '+common.from+' to '+common.to+'. '+(failures.values().next().value||'No exact contract candles covering the requested entry and exit times.'));
- return {issues:[...failures].map(([d,message])=>({d,message})),p:{...p,...common,source:'Index options · observed contract minute candles · index coverage '+(days[0]||'—')+' to '+(days.at(-1)||'—')+' · '+trades.length+' fills / '+days.length+' observed index sessions'},trades,skipped,prices:[...candles].map(([name,days])=>({name,bars:[...days.values()]}))};
+ return {observedDays:days,issues:[...failures].map(([d,message])=>({d,message})),p:{...p,...common,source:'Index options · observed contract minute candles · index coverage '+(days[0]||'—')+' to '+(days.at(-1)||'—')+' · '+trades.length+' fills / '+days.length+' observed index sessions'},trades,skipped,prices:[...candles].map(([name,days])=>({name,bars:[...days.values()]}))};
 }
 function applyAlgoTargets(trades,configs,common,limits){
  const groups=new Map(),output=[];
@@ -229,7 +229,7 @@ function applyAlgoTargets(trades,configs,common,limits){
    cutoff=stamp;
    for(const l of open){
     const t=l.t,p={...configs[t.leg-1].p,qty:t.qty},xp=l.prices.get(stamp)*(1-l.sign*common.slip/10000);
-    t.xp=xp;t.d=stamp.slice(0,10);t.exit=stamp.slice(11);t.gross=l.sign*(xp-t.ep)*t.qty;t.charges=costs(p,t.ep,xp);t.net=t.gross-t.charges;t.reason=stop?'Algo stop loss':'Algo profit target';
+    t.slippageCost=l.sign*((l.prices.get(stamp)-t.entryRef)-(xp-t.ep))*t.qty;t.xp=xp;t.d=stamp.slice(0,10);t.exit=stamp.slice(11);t.gross=l.sign*(xp-t.ep)*t.qty;t.charges=costs(p,t.ep,xp);t.net=t.gross-t.charges;t.reason=stop?'Algo stop loss':'Algo profit target';
    }
    break;
   }

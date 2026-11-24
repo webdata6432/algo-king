@@ -41,3 +41,27 @@ for row in sheet.values:
 assert len(companies)>1000
 dest=Path(__file__).parent/'dist/market/caps.json'
 dest.write_text(json.dumps({'source':url,'companies':list(companies.values())},ensure_ascii=True,separators=(',',':')))
+
+# Record the published roster for subsequent trading days. Preserve all earlier snapshots.
+from datetime import datetime, timedelta, timezone
+breadth_path = dest.with_name('breadth-universe.json')
+breadth = json.loads(breadth_path.read_text())
+latest = {}
+for _, changes, removals in breadth['updates']:
+    for isin in removals:
+        latest.pop(isin, None)
+    latest.update(changes)
+roster_url = 'https://www.niftyindices.com/IndexConstituent/ind_nifty500list.csv'
+roster = {
+    row['ISIN Code']: [row['Symbol'], row['Industry']]
+    for row in csv.DictReader(io.StringIO(download(roster_url).decode('utf-8-sig')))
+    if re.fullmatch(r'IN[A-Z0-9]{10}', row['ISIN Code']) and not row['Symbol'].startswith('DUMMY')
+}
+if not 490 <= len(roster) <= 515:
+    raise ValueError('Unexpected NIFTY 500 roster size')
+changes = {key: value for key, value in roster.items() if latest.get(key) != value}
+removals = sorted(latest.keys() - roster.keys())
+if changes or removals:
+    available = (datetime.now(timezone(timedelta(hours=5, minutes=30))).date() + timedelta(days=1)).isoformat()
+    breadth['updates'].append([available, changes, removals])
+    breadth_path.write_text(json.dumps(breadth, separators=(',', ':')))

@@ -15,7 +15,7 @@ for(const file of ['historical-minutes','monthly-research']){
  html=html.replaceAll("'market/"+file+".json'","'data:application/json;base64,"+bytes.toString('base64')+"'");
 }
 await mkdir('published/market',{recursive:true});
-for(const file of ['caps.json','shares.json','contracts.json','opening-baskets.json.gz','stock-baskets.json.gz','option-window.json.gz','retired-options.json'])
+for(const file of ['breadth-universe.json','caps.json','shares.json','contracts.json','opening-baskets.json.gz','stock-baskets.json.gz','option-window.json.gz','retired-options.json'])
  await copyFile('dist/market/'+file,'published/market/'+file);
 const key=randomBytes(32),iv=randomBytes(12),cipher=createCipheriv('aes-256-gcm',key,iv);
 await writeFile('published/app.gz.bin',Buffer.concat([iv,cipher.update(gzipSync(html,{level:9})),cipher.final(),cipher.getAuthTag()]));

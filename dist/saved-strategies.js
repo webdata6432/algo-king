@@ -14,9 +14,9 @@ function savedStrategySection(host){
   row.innerHTML='<b>'+esc(item.name)+'</b><span>'+cash(item.net)+' · last run</span><button>Open result</button><button>Edit</button>';
   const [open,edit]=row.querySelectorAll('button');
   open.onclick=()=>{host.innerHTML='<button id="backSaved">← Historical Backtest</button><h1>'+esc(item.name)+'</h1>'+ (item.pending?note('Settings changed since this result. Run the strategy again to update it.'):'')+'<div id="results"></div>';lastRun={...item,savedId:item.id};lastMonth='';showResults();$('backSaved').onclick=historicalBacktest};
-  edit.disabled=!item.definition&&!item.p?.legs?.length;
+  edit.disabled=!item.sectorConfig&&!item.definition&&!item.p?.legs?.length;
   edit.title=edit.disabled?'This report has no Backtester configuration':'Edit saved strategy';
-  edit.onclick=()=>{editingStrategyId=item.id;location.hash='test'};
+  edit.onclick=()=>{if(item.sectorConfig){sectorMomentumPage(item);return}editingStrategyId=item.id;location.hash='test'};
   section.append(row);
  }
  host.insertBefore(section,host.querySelector('section'));

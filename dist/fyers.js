@@ -55,6 +55,7 @@ async function brokerRequest(action,details={}){
   if(session!==owner)throw Error('Reopen your workspace.');
   sessionChanged(refreshed);
  }
+ if(action==='openingBatch')return accountRequest('/functions/v1/basket-openings',details,session.access_token);
  if(action==='archiveRank'){
   const {from,to,cap,query,cut,limit}=details;
   return accountRequest('/rest/v1/rpc/owner_momentum_archive',{p_from:from,p_to:to,p_cap:cap,p_query:query,p_cut:cut,p_limit:limit},session.access_token);
