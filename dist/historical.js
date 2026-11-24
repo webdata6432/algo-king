@@ -1,25 +1,25 @@
+async function readOptionArchive(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw Error();
+  return res.json();
+}
+async function dailyModels(){
+  const version='__DAILY_MODEL_VERSION__';
+  if(!/^[a-f0-9]{40}$/.test(version))return readOptionArchive('market/historical.json');
+  return cachedRead('daily-models-'+version,86400000,async()=>{
+    const {url}=await fyersRequest('dailyModels',{version});
+    const file=await fetch(url);
+    if(!file.ok)throw Error('Daily option archive unavailable');
+    return new Response(file.body.pipeThrough(new DecompressionStream('gzip'))).json();
+  });
+}
 async function optionHistory(initial=0) {
   const page = document.createElement('section');
   page.className = 'panel';
   document.getElementById('app').replaceChildren(page);
   page.textContent = 'Loading historical trades…';
   try {
-    async function read(url) {
-      const res = await fetch(url);
-      if (!res.ok) throw Error();
-      return res.json();
-    }
-    async function dailyModels(){
-      const version='__DAILY_MODEL_VERSION__';
-      if(!/^[a-f0-9]{40}$/.test(version))return read('market/historical.json');
-      return cachedRead('daily-models-'+version,86400000,async()=>{
-        const {url}=await fyersRequest('dailyModels',{version});
-        const file=await fetch(url);
-        if(!file.ok)throw Error('Daily option archive unavailable');
-        return new Response(file.body.pipeThrough(new DecompressionStream('gzip'))).json();
-      });
-    }
-    const [archive, minutes, research] = await Promise.all([dailyModels(), read('market/historical-minutes.json'), read('market/monthly-research.json')]);
+    const [archive, minutes, research] = await Promise.all([dailyModels(), readOptionArchive('market/historical-minutes.json'), readOptionArchive('market/monthly-research.json')]);
     const days = Object.keys(archive).sort();
     const end = days.at(-1);
     const strategies = [['S1','ATM','CE','Sell'],['S2','ATM','PE','Sell'],['S3a','ATM','CE','Buy'],['S3b','ATM','PE','Buy'],['S4a','Under 200','CE','Sell'],['S4b','Under 200','PE','Sell'],['S5a','Near 300','CE','Sell'],['S5b','Near 300','PE','Sell']];
@@ -109,4 +109,41 @@ async function optionHistory(initial=0) {
     const back=document.createElement('button');back.textContent='← Strategy library';back.onclick=historicalBacktest;page.prepend(back);
     period();render();
   } catch {page.textContent='Historical results could not be loaded. Reopen this page to retry.';}
+}
+
+async function expiryPutPage(){
+  const app=$('app');
+  app.innerHTML=heading('Historical Backtest','NIFTY · pre-expiry short put','Sell the nearest-expiry ATM put one calendar day before its listed expiry.','<a href="#historical">Strategy library</a>')+'<section class="panel" id="expiryStudy">Loading exchange history…</section>';
+  const panel=$('expiryStudy');
+  try{
+    const archive=await dailyModels();
+    if(!panel.isConnected)return;
+    const days=Object.keys(archive).filter(d=>d>='2022-01-01' && archive[d]?.length).sort();
+    if(!days.length)throw Error('No exchange history available.');
+    const first='2022-01-01',last=days.at(-1);
+    const bounds='min="'+first+'" max="'+last+'"';
+    panel.innerHTML='<form id="expiryForm"><div class="fields">'+input('From','expiryFrom',first,'date',bounds)+input('Through','expiryTo',last,'date',bounds)+input('Lots','expiryLots',1,'number','min="1" step="1"')+'</div><button class="primary">Show results</button></form><p>The prior close selects the ATM strike. Sell at the reported opening premium and buy back at the reported closing premium. One trade per eligible session, with no stop or intraday target. A weekend or holiday directly before expiry produces no entry.</p><p>Costs are modelled at ₹20 per order plus 0.20% of premium turnover and 0.5 points of adverse slippage per fill. Reported closes are execution proxies. Historical margin and intraday drawdown are unavailable. An unhedged short put can lose substantially more than its premium.</p><div id="expiryResults" aria-live="polite"></div>';
+    function render(){
+      const from=$('expiryFrom').value,to=$('expiryTo').value,lots=$('expiryLots').valueAsNumber,out=$('expiryResults');
+      if(!from||!to||from>to||from<first||to>last||!Number.isSafeInteger(lots)||lots<1){out.textContent='Choose dates inside the archive and a positive whole number of lots.';return}
+      const trades=[],quarters=new Map();
+      let net=0,high=0,drawdown=0,gross=0,cost=0;
+      for(const d of days){
+        if(d<from||d>to)continue;
+        const r=archive[d].find(x=>x[1]==='ATM'&&x[2]==='PE');
+        if(!r||Date.parse(r[3])-Date.parse(d)!==86400000)continue;
+        const qty=lots*r[7],profit=(r[5]-r[6])*qty,friction=40+0.002*(r[5]+r[6])*qty+qty;
+        const gain=profit-friction;
+        gross+=profit;cost+=friction;net+=gain;high=Math.max(high,net);drawdown=Math.max(drawdown,high-net);
+        trades.push({d,net,gain,r,qty,friction,tip:d+' · Trade '+cash(gain)+' · Total '+cash(net)});
+        const q=d.slice(0,4)+' Q'+Math.ceil(Number(d.slice(5,7))/3);
+        quarters.set(q,(quarters.get(q)||0)+gain);
+      }
+      if(!trades.length){out.textContent='No qualifying archived trades in these dates.';return}
+      const wins=trades.filter(t=>t.gain>0).length;
+      out.innerHTML='<h2>Net P&amp;L</h2>'+table(['Gross','Costs + slippage','Net','Close-to-close drawdown','Wins / trades'],[[cash(gross),cash(cost),cash(net),cash(-drawdown),wins+' / '+trades.length]])+plot(trades,'net')+'<h2>Quarterly results</h2>'+table(['Quarter','Net P&L'],Array.from(quarters,([q,v])=>[q,cash(v)]).reverse())+'<h2>Trades</h2>'+table(['ID','Date','Expiry','PE strike','Units','Sell open','Buy close','Costs + slippage','Net P&L'],trades.map(({d,r,qty,friction,gain},i)=>['T/'+(i+1),displayDates(d),displayDates(r[3]),fmt(r[4]),qty,fmt(r[5]),fmt(r[6]),cash(friction),cash(gain)]).reverse());
+      if(from<='2023-06-28'&&to>='2023-06-27')out.insertAdjacentHTML('beforeend',note('June 2023 expiry was revised on 27 June. The archive retains the expiry printed that day and has no selection on 28 June.'));
+    }
+    $('expiryForm').onsubmit=e=>{e.preventDefault();render()};render();
+  }catch(e){if(panel.isConnected)panel.textContent='Could not load option history. Reopen this strategy to retry.'}
 }
