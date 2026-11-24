@@ -8,6 +8,8 @@ from pathlib import Path
 
 ist=timezone(timedelta(hours=5,minutes=30))
 target=Path('dist/market/contracts.json')
+archive_path=target.with_name("retired-options.json")
+previous=json.loads(target.read_text()) if target.exists() else []
 result=[]
 for exchange,symbol in [('NSE','NIFTY'),('BSE','SENSEX')]:
     path=os.environ.get(exchange+'_MASTER')
@@ -24,4 +26,10 @@ for exchange,symbol in [('NSE','NIFTY'),('BSE','SENSEX')]:
     for x in options:
         if x['expiry'] in expiries:
             result.append([x['trading_symbol'],x['instrument_key'],datetime.fromtimestamp(x['expiry']/1000,ist).date().isoformat(),x['strike_price'],x['instrument_type'],x['lot_size'],x.get('weekly') is False])
+today=datetime.now(ist).date()
+archive=json.loads(archive_path.read_text()) if archive_path.exists() else {"since":str(today),"rows":[]}
+cutoff=str(today-timedelta(days=60))
+retired={r[0]:r for r in archive["rows"]+previous if cutoff<=r[2]<str(today) and len(r)==7}
+archive={"since":max(archive["since"],cutoff),"rows":sorted(retired.values())}
+archive_path.write_text(json.dumps(archive,separators=(',',':')))
 target.write_text(json.dumps(sorted(result),separators=(',',':')))

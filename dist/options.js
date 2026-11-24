@@ -6,15 +6,11 @@ function optionChain(){
  }).catch(err=>{optionDirectory=null;throw err});
 }
 function eligibleOptions(chain,p,day){
- const dates=[...new Set(chain.map(c=>c[2]))].sort();
+ const dates=[...new Set(chain.map(c=>c[2]))].filter(d=>d>=day).sort();
  let expiry=p.optionExpiry;
- if(expiry==='This week'||expiry==='Next week'){
-  const monday=Date.parse(day)-((new Date(day).getUTCDay()+6)%7)*86400000;
-  const start=monday+(expiry==='Next week'?7:0)*86400000;
-  expiry=dates.find(d=>d>=day&&Date.parse(d)>=start&&Date.parse(d)<start+7*86400000);
- }else if(expiry==='Monthly'){
-  expiry=dates.find(d=>d>=day&&d.slice(0,7)===day.slice(0,7)&&chain.some(c=>c[2]===d&&c[6]===true));
- }
+ if(expiry==='This week')expiry=dates[0];
+ if(expiry==='Next week')expiry=dates[1];
+ if(expiry==='Monthly')expiry=dates.find(d=>chain.some(c=>c[2]===d&&c[6]===true));
  return chain.filter(c=>c[2]===expiry&&c[4]===p.cp&&day<=expiry).sort((a,b)=>a[3]-b[3]);
  }
 function pickOption(chain,p,day,spot){
@@ -87,43 +83,62 @@ function expiredContracts(symbol,expiry,names,monthly){
 }
 async function simulateOptions(p,common,load){
  const index=p.s==='NIFTY'?'NIFTY 50':p.s;
- const chain=(await optionChain()).filter(c=>c[0].startsWith(p.s+' '));
+ const [active,archive]=await Promise.all([optionChain(),cachedRead('retired-directory',3600000,async()=>{const r=await fetch('market/retired-options.json');if(!r.ok)throw Error('Historical option directory unavailable. Reload and retry.');return r.json()})]);
+ const chain=[...active,...archive.rows.map(r=>[r[0],r[0],...r.slice(2)])].filter(c=>c[0].startsWith(p.s+' '));
+ const retired=new Map(archive.rows.filter(c=>c[0].startsWith(p.s+' ')).map(c=>[c[0],c]));
  const windowData=await compressedMarket('option-window').catch(()=>({}));
  const unpack=(d,b)=>b.map(([m,o,h,l,c])=>({d,m,o:o/100,h:h/100,l:l/100,c:c/100}));
  const cachedSpot=Object.keys(windowData).filter(k=>k.startsWith(p.s+'|')).map(k=>k.split('|')[1]).sort();
  const longRange=Date.parse(common.from)<Date.now()-29*86400000;
  const expiryMeta=new Map(),byExpiry=new Map();
- if(longRange){
-  for(let a=common.from;a<=common.to;a=shiftDate(a,366)){
-   const b=[shiftDate(a,365),common.to].sort()[0];
-   const {dates}=await expiredRead('expiredDates',{symbol:p.s,from:a,to:b});
-   for(const d of dates.options)expiryMeta.set(d,dates.futures.includes(d));
-  }
-  const tail=shiftDate(common.to,35),today=new Date().toISOString().slice(0,10);
-  if(common.to<today){
-   const {dates}=await expiredRead('expiredDates',{symbol:p.s,from:shiftDate(common.to,1),to:tail<today?tail:today});
-   for(const d of dates.options)expiryMeta.set(d,dates.futures.includes(d));
-  }
+ let calendarRequest,brokerBlock;
+ async function historicalRead(action,params){
+  if(brokerBlock)throw brokerBlock;
+  try{return await expiredRead(action,params)}
+  catch(err){if(/daily.*allowance|requests.per.day|reconnect|connect FYERS|login expired/i.test(err.message))brokerBlock=err;throw err}
+ }
+ async function loadCalendar(){
+  if(!calendarRequest)calendarRequest=(async()=>{
+   const last=[shiftDate(archive.since,34),shiftDate(common.to,35),new Date(Date.now()+19800000).toISOString().slice(0,10)].sort()[0];
+   for(let a=common.from;a<=last;a=shiftDate(a,366)){
+    const b=[shiftDate(a,365),last].sort()[0];
+    const {dates}=await historicalRead('expiredDates',{symbol:p.s,from:a,to:b});
+    for(const d of dates.options)expiryMeta.set(d,dates.futures.includes(d));
+   }
+  })();
+  await calendarRequest;
  }
  const recent=cachedSpot.filter(d=>d>=common.from&&d<=common.to);
  let spot;
- if(recent.length&&common.from>=cachedSpot[0]&&common.to<=cachedSpot.at(-1)){
+ if(recent.length===1&&common.from===common.to){
    spot=recent.flatMap(d=>unpack(d,windowData[p.s+'|'+d]));
  }else{
-   try{spot=await load(index,null,common.from,common.to)}catch(err){if(longRange||!recent.length)throw err;spot=recent.flatMap(d=>unpack(d,windowData[p.s+'|'+d]));}
+   const observed=await load(index,null,common.from,common.to);
+   const byDate=new Map(recent.map(d=>[d,unpack(d,windowData[p.s+'|'+d])]));
+   const fresh=new Map();
+   for(const r of observed){if(!fresh.has(r.d))fresh.set(r.d,[]);fresh.get(r.d).push(r)}
+   for(const [day,rows] of fresh)if(rows.length>=(byDate.get(day)?.length||0))byDate.set(day,rows);
+   spot=[...byDate].sort(([a],[b])=>a.localeCompare(b)).flatMap(([,rows])=>rows);
  }
  const networkLoad=load;
  load=async(symbol,key,from,to)=>{
    if(key&&/^(NSE:NIFTY|BSE:SENSEX)/.test(key)){
      const expiry=byExpiry.get(key),monday=shiftDate(from,-((new Date(from).getUTCDay()+6)%7));
      const start=[monday,common.from].sort().at(-1),end=[expiry,common.to,[shiftDate(monday,6),to].sort().at(-1)].sort()[0];
-     const {candles}=await expiredRead('expiredBars',{symbol:key,from:start,to:end});
+     const {candles}=await historicalRead('expiredBars',{symbol:key,from:start,to:end});
      return candles.map(([t,o,h,l,c])=>{const ist=new Date(t*1000+19800000);return {d:ist.toISOString().slice(0,10),m:ist.getUTCHours()*60+ist.getUTCMinutes(),o,h,l,c}}).filter(r=>r.d>=from&&r.d<=to&&r.m>=555&&r.m<930&&0<r.l&&r.l<=Math.min(r.o,r.c)&&r.h>=Math.max(r.o,r.c)).sort((a,b)=>a.d.localeCompare(b.d)||a.m-b.m);
    }
-   if(key&&from===to){
-     const contract=chain.find(r=>r[1]===key);
-     const bars=contract&&windowData[contract[0]+'|'+from];
-     if(bars)return unpack(from,bars);
+   const c=retired.get(key)||active.find(r=>r[1]===key&&r[0].startsWith(symbol+' '));
+   if(c&&from===to){
+    const bars=windowData[c[0]+'|'+from];
+    if(bars?.length)return unpack(from,bars);
+   }
+   if(retired.has(key)){
+    const {symbols}=await historicalRead('expiredChain',{symbol,expiry:c[2]});
+    const exact=expiredContracts(symbol,c[2],symbols,c[6]).find(r=>r[3]===c[3]&&r[4]===c[4]);
+    if(!exact)return [];
+    byExpiry.set(exact[1],c[2]);
+    return load(symbol,exact[1],from,to);
    }
    return networkLoad(symbol,key,from,to);
  };
@@ -140,15 +155,14 @@ async function simulateOptions(p,common,load){
  const candles=new Map(),trades=[],skipped=[];let busy='';
  async function resolve(day,i){
   let candidates=chain,terms=p;
-  if(longRange){
+  if(day<archive.since){
+   await loadCalendar();
    const placeholders=[...expiryMeta].map(([d,monthly])=>['','',d,0,p.cp,0,monthly]);
-   const all=[...placeholders,...chain];
-   const upcoming=[...new Set(all.map(c=>c[2]))].filter(d=>d>=day).sort();
-   const expiry=p.optionExpiry==='This week'?upcoming[0]:p.optionExpiry==='Next week'?upcoming[1]:eligibleOptions(all,p,day)[0]?.[2];
+   const expiry=eligibleOptions([...placeholders,...chain],p,day)[0]?.[2];
    if(!expiry)return null;
    terms={...p,optionExpiry:expiry};
-   if(expiryMeta.has(expiry)){
-    const {symbols}=await expiredRead('expiredChain',{symbol:p.s,expiry});
+   if(!chain.some(c=>c[2]===expiry)){
+    const {symbols}=await historicalRead('expiredChain',{symbol:p.s,expiry});
     candidates=expiredContracts(p.s,expiry,symbols,expiryMeta.get(expiry));
     if(!candidates.length)throw Error('FYERS returned no recognised option contracts for '+expiry);
     for(const c of candidates)byExpiry.set(c[1],expiry);
@@ -157,14 +171,11 @@ async function simulateOptions(p,common,load){
   }
   return p.strikeMode.startsWith('Premium')?await premiumContract(candidates,terms,day,load):pickOption(candidates,terms,day,opens.get(day));
  }
- const prepared=new Map();
+ const failures=new Map();
  for(const [i,day] of days.entries()){
   if(day<=busy)continue;
-  if(longRange && common.holding==='Intraday' && !p.strikeMode.startsWith('Premium') && !prepared.has(day)){
-   await Promise.all(days.slice(i,i+4).map(async(d,j)=>{const c=await resolve(d,i+j);const rows=c?await load(p.s,c[1],d,d):[];prepared.set(d,{c,rows})}));
-  }
-  const cached=prepared.get(day);prepared.delete(day);
-  const contract=cached?cached.c:await resolve(day,i);if(!contract){skipped.push(day);continue}
+  try{
+  const contract=await resolve(day,i);if(!contract){skipped.push(day);failures.set(day,'No eligible '+p.cp+' contract for '+p.optionExpiry+' and the selected strike rule.');continue}
   const [name,key,expiry]=contract;
   let through=day;
   if(common.holding==='Positional'){
@@ -172,15 +183,18 @@ async function simulateOptions(p,common,load){
    else through=days[i+(common.holdDays??1)];
   }
   if(!through||through<day||through>expiry){skipped.push(day);continue}
-  const rows=cached?cached.rows:await load(p.s,key,day,through);
-  if(!rows.some(r=>r.d===day)){skipped.push(day);continue}
+  const rows=await load(p.s,key,day,through);
+  if(!rows.some(r=>r.d===day)){skipped.push(day);failures.set(day,'Minute candles unavailable for '+name);continue}
   if(!candles.has(name))candles.set(name,new Map());
   for(const bar of dailyOHLC(rows))candles.get(name).set(bar.d,bar);
   const qty=p.lots*contract[5];
   const run=simulate(rows,{...p,...common,from:day,to:through,qty,expiry,holdDays:days.indexOf(through)-i,holding:day===through?'Intraday':common.holding});
   const fill=run.trades.find(t=>t.entryDay===day);
   if(fill){trades.push({...fill,s:name,qty,marks:rows.filter(r=>r.d>=day&&r.d<=fill.d)});busy=fill.d}
-  else if(run.skipped.includes(day))skipped.push(day);
+  else if(run.skipped.includes(day)){skipped.push(day);failures.set(day,'Incomplete minute candles for '+name+' between the selected entry and exit.');}
+  }catch(err){
+   skipped.push(day);failures.set(day,err.message);
+  }
  }
  if(longRange&&['This week','Next week','Monthly'].includes(p.optionExpiry)){
   const unavailable=new Set(skipped);
@@ -188,8 +202,8 @@ async function simulateOptions(p,common,load){
    if(days.filter(d=>d.startsWith(month)).every(d=>unavailable.has(d)))throw Error('Incomplete option coverage for '+month+' in the requested '+common.from+' to '+common.to+' run. Check the expiry, entry and candle availability.');
   }
  }
- if(!trades.length)throw Error(p.s+' · No complete option fills for '+common.from+' to '+common.to+'. Available cached spot sessions: '+(cachedSpot.join(', ')||'none')+'. Check expiry, entry time and strike.');
- return {p:{...p,...common,source:'Index options · observed contract minute candles · index coverage '+(days[0]||'—')+' to '+(days.at(-1)||'—')+' · '+trades.length+' fills / '+days.length+' observed index sessions'},trades,skipped,prices:[...candles].map(([name,days])=>({name,bars:[...days.values()]}))};
+ if(!trades.length)throw Error(p.s+' · No complete option fills for '+common.from+' to '+common.to+'. '+(failures.values().next().value||'No exact contract candles covering the requested entry and exit times.'));
+ return {issues:[...failures].map(([d,message])=>({d,message})),p:{...p,...common,source:'Index options · observed contract minute candles · index coverage '+(days[0]||'—')+' to '+(days.at(-1)||'—')+' · '+trades.length+' fills / '+days.length+' observed index sessions'},trades,skipped,prices:[...candles].map(([name,days])=>({name,bars:[...days.values()]}))};
 }
 function applyAlgoTargets(trades,configs,common,limits){
  const groups=new Map(),output=[];

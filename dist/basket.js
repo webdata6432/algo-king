@@ -2,7 +2,7 @@ let legSequence=0;
 function builderPage(){
  const editing=saved.find(s=>s.id===editingStrategyId);editingStrategyId=null;
  const rangeEnd=new Date(Date.now()+19800000).toISOString().slice(0,10);
- $('app').innerHTML=heading('Strategy studio','Backtester','Build a strategy from minute candles. Times are in IST.',importButton+' <button onclick="strategyLibrary()">Saved strategies</button>')+'<form id="strategy" class="panel"><div class="row">'+select('Strategy','strategyMode',['Options','Stock','Basket'])+'<button type="button" id="addLeg">＋ Add leg</button></div><div class="fields">'+select('Dates','bp',['7D','15D','30D','1Y','3Y','5Y','Custom'])+input('From','bf',presetStart(rangeEnd,'7D'),'date')+input('Through','bt',rangeEnd,'date')+'</div><div id="legs"></div><h3>Algo targets · all legs</h3><div class="fields">'+riskField('Total profit target','algoTarget','algoTU',0)+riskField('Total stop loss','algoStop','algoSU',0)+'</div><p class="hint">Checked at each minute open using combined gross P&amp;L. % uses entry value. Points sum the signed moves per leg. Zero is off.</p><h3>Daily transactions</h3><div class="fields">'+input('Transactions per day','maxEntries',1,'number','readonly')+'</div><h3>Algo expiry and exit</h3><div class="fields">'+ select('Trade type','holding',['Intraday','Delivery'])+select('Delivery exit','deliveryBasis',['Sessions after entry','Sessions before expiry'])+input('Trading sessions','deliveryN',1,'number','min="0" step="1"')+input('Delivery exit · IST','deliveryTime','15:15','time')+input('Algo entry from · IST','algoStart','09:15','time')+input('Algo exit by · IST','algoEnd','15:29','time')+input('Slippage · bps per fill','slip',0,'number','min="0" step="any"')+'</div><div class="row"><button class="primary">Run backtest</button></div><p role="status" id="runMessage"></p><details><summary>Execution rules</summary>Price above and below use the first qualifying minute open after the entry window starts. Limit orders fill at the limit or a better open. For a limit touched inside a candle, only an adverse stop can exit in that candle. Each strategy opens once per eligible day when every leg qualifies. All legs together count as one transaction. Automatic re-entry is off. Stops take priority inside an ambiguous candle. Gaps fill at the open. Incomplete candle windows skip the session. Delivery uses the selected session count and the earlier applicable exit time.</details></form><div id="results"></div>';
+ $('app').innerHTML=heading('Strategy studio','Backtester','Build a strategy from minute candles. Times are in IST.',importButton+' <button onclick="strategyLibrary()">Saved strategies</button>')+'<form id="strategy" class="panel"><div class="row">'+select('Strategy','strategyMode',['Options','Stock','Basket'])+'<button type="button" id="addLeg">＋ Add leg</button></div>'+select('Basket entries','basketPolicy',['Each stock follows its rule','Require every leg to qualify'])+'<div class="fields">'+select('Dates','bp',['7D','15D','30D','1Y','3Y','5Y','Custom'])+input('From','bf',presetStart(rangeEnd,'7D'),'date')+input('Through','bt',rangeEnd,'date')+'</div><div id="legs"></div><h3>Algo targets · all legs</h3><div class="fields">'+riskField('Total profit target','algoTarget','algoTU',0)+riskField('Total stop loss','algoStop','algoSU',0)+'</div><p class="hint">Checked at each minute open using combined gross P&amp;L. % uses entry value. Points sum the signed moves per leg. Zero is off.</p><h3>Daily transactions</h3><div class="fields">'+input('Transactions per day','maxEntries',1,'number','readonly')+'</div><h3>Algo expiry and exit</h3><div class="fields">'+ select('Trade type','holding',['Intraday','Delivery'])+select('Delivery exit','deliveryBasis',['Sessions after entry','Sessions before expiry'])+input('Trading sessions','deliveryN',1,'number','min="0" step="1"')+input('Delivery exit · IST','deliveryTime','15:15','time')+input('Algo entry from · IST','algoStart','09:15','time')+input('Algo exit by · IST','algoEnd','15:29','time')+input('Slippage · bps per fill','slip',0,'number','min="0" step="any"')+'</div><div class="row"><button class="primary">Run backtest</button></div><p role="status" id="runMessage"></p><details><summary>Execution rules</summary>Price above and below use the first qualifying minute open after the entry window starts. Limit orders fill at the limit or a better open. For a limit touched inside a candle, only an adverse stop can exit in that candle. Each stock can enter once per eligible day. For baskets, choose whether entries follow each stock’s rule or require every leg to qualify on the same day. Automatic re-entry is off. Stops take priority inside an ambiguous candle. Gaps fill at the open. Incomplete candle windows skip the session. Delivery uses the selected session count and the earlier applicable exit time.</details></form><div id="results"></div>';
  const legs=$('legs'),sources=[...[...groups.flat(),'NIFTY 50','SENSEX','BANKNIFTY','NIFTY MIDCAP 100'].map(s=>({s,id:'market:'+s,title:s+' · Market minute candles'})),...testSources().filter(x=>!x.id.startsWith('demo:'))];
  equityDirectory().then(rows=>{
   const bySymbol=new Map(sources.filter(x=>x.id.startsWith('market:')).map(x=>[x.s,x]));
@@ -28,7 +28,7 @@ function builderPage(){
   const fields=document.createElement('div');fields.className='fields optionTerms';
   fields.innerHTML=choice('Call / Put','cp',['CE','PE'])+choice('Expiry','expiry',['This week','Next week','Monthly'])+choice('Strike selection','basis',['Spot Based','Market price','Future Based','Strike price','Strike above','Strike below','Premium near','Premium greater','Premium lesser','Delta near','Delta greater','Delta lesser'])+choice('Moneyness','money',['ATM',...Array.from({length:5},(_,i)=>(i+1)+' ITM'),...Array.from({length:5},(_,i)=>(i+1)+' OTM')])+field('Strike steps','steps',1,'number','min="1" step="1"')+field('Strike price','strike','','number','min="0.01" step="any"');
   el.querySelector('.legRisk').before(fields);
-  for(const opt of get('basis').options){if(opt.value==='Market price')opt.textContent='Market price · ATM';if(['Future Based','Delta near','Delta greater','Delta lesser'].includes(opt.value)){opt.disabled=true;opt.textContent+=' · historical input required'}}
+  for(const opt of get('basis').options){if(opt.value==='Market price'){opt.value='Market price';opt.textContent='Market price · ATM'}if(['Future Based','Delta near','Delta greater','Delta lesser'].includes(opt.value)){opt.disabled=true;opt.textContent+=' · historical input required'}}
   function refresh(){
    const mode=get('basis').value,manual=mode!=='Spot Based';if(mode==='Market price')get('strike').value='';get('strike').parentElement.firstChild.textContent=mode.startsWith('Premium')?'Premium ₹':'Strike price';
    for(const [key,hide] of [['strike',!manual||mode==='Market price'],['money',manual],['steps',true]]){get(key).disabled=hide;get(key).parentElement.hidden=hide}
@@ -127,14 +127,15 @@ function builderPage(){
   for(const c of controls){
    const v=restore.fields[fieldKey(c)];if(v==null)continue;
    if(fieldKey(c)==='expiry'&&![...c.options].some(o=>o.value===v))c.add(new Option(v,v));
-   c.value=v;if(c.tagName==='SELECT')c.dispatchEvent(new Event('change'));
+   c.value=fieldKey(c)==='basis'&&v==='Market price · ATM'?'Market price':v;if(c.tagName==='SELECT')c.dispatchEvent(new Event('change'));
   }
  }
  el.querySelector('button').onclick=()=>{el.remove();if(!legs.children.length)add($('strategyMode').value==='Options'?'Options':'Equity');renumber()};renumber();
  }
  function renumber(){[...legs.children].forEach((el,i)=>el.querySelector('h3').textContent='Leg '+(i+1))}
  let currentMode='Options';
- $('strategyMode').onchange=()=>{const mode=$('strategyMode').value;if(mode===currentMode)return;syncDelivery(mode);if(mode==='Basket'&&currentMode==='Stock'){currentMode=mode;return}currentMode=mode;legs.replaceChildren();add(mode==='Options'?'Options':'Equity')};
+ const policy=$('basketPolicy');policy.parentElement.hidden=true;
+ $('strategyMode').onchange=()=>{const mode=$('strategyMode').value;if(mode===currentMode)return;policy.parentElement.hidden=mode!=='Basket';syncDelivery(mode);if(mode==='Basket'&&currentMode==='Stock'){currentMode=mode;return}currentMode=mode;legs.replaceChildren();add(mode==='Options'?'Options':'Equity')};
  $('addLeg').onclick=()=>{if(currentMode==='Options'){add('Options');return}$('strategyMode').value='Basket';$('strategyMode').dispatchEvent(new Event('change'));add('Equity')};
  const savedDays={options:'',stock:'1'};let activeDays;
  function syncDelivery(mode){
@@ -154,10 +155,11 @@ function builderPage(){
  }
  $('holding').onchange=()=>syncDelivery(currentMode);syncDelivery(currentMode);
  $('bp').onchange=()=>{let custom=$('bp').value==='Custom';$('bf').disabled=$('bt').disabled=!custom;if(!custom)$('bf').value=presetStart($('bt').value,$('bp').value)};$('bp').onchange();add('Options');
- const commonKeys=['bp','bf','bt','algoTarget','algoTU','algoStop','algoSU','maxEntries','holding','deliveryN','deliveryTime','algoStart','algoEnd','slip'];
+ const commonKeys=['basketPolicy','bp','bf','bt','algoTarget','algoTU','algoStop','algoSU','maxEntries','holding','deliveryN','deliveryTime','algoStart','algoEnd','slip'];
  const definition=()=>({mode:currentMode,common:Object.fromEntries(commonKeys.map(k=>[k,$(k).value])),legs:[...legs.children].map(l=>l.snapshot())});
  if(editing){
   const draft=editing.definition||legacyDefinition(editing);
+  if(draft.mode==='Basket'&&!draft.common.basketPolicy)policy.selectedIndex=1;
   $('strategyMode').value=draft.mode;$('strategyMode').dispatchEvent(new Event('change'));
   for(const k of commonKeys){if(draft.common[k]!=null){$(k).value=draft.common[k];if($(k).tagName==='SELECT')$(k).dispatchEvent(new Event('change'))}}
   legs.replaceChildren();for(const leg of draft.legs)add(leg.kind,leg);
@@ -183,10 +185,11 @@ function builderPage(){
   for(const c of configs)c.p.exit=Math.min(c.p.exit,common.deliveryExit);
  }
  const form=e.target,button=form.querySelector('.primary');if(button.disabled)return;
+ $('results').replaceChildren();lastRun=null;
  button.disabled=true;
  const optionData=new Map();
  async function load(symbol,key,from,to){
-  if(!key&&session&&Date.parse(to)-Date.parse(from)>7*86400000&&['NIFTY 50','SENSEX'].includes(symbol))return archivedMinutes(symbol==='SENSEX'?'BSE_INDEX|SENSEX':'NSE_INDEX|Nifty 50',from,to);
+  if(!key&&session&&['NIFTY 50','SENSEX'].includes(symbol))return archivedMinutes(symbol==='SENSEX'?'BSE_INDEX|SENSEX':'NSE_INDEX|Nifty 50',from,to);
   const id=JSON.stringify([symbol,key,from,to]);if(optionData.has(id))return optionData.get(id);
   const pending=(async()=>{let rows=[];
    const brokerIndex=!key&&session&&Date.parse(from)<Date.now()-29*86400000;
@@ -199,7 +202,7 @@ function builderPage(){
    }return rows})();
   optionData.set(id,pending);return pending;
  }
- try{await Promise.all(configs.map(async c=>{if(c.p.mode==='Options'){$('runMessage').textContent='Loading index and option minute candles…';c.run=await simulateOptions(c.p,common,load);return}if(c.rows)return;$('runMessage').textContent='Loading observed minute candles…';
+ try{const loaded=await Promise.allSettled(configs.map(async c=>{if(c.p.mode==='Options'){$('runMessage').textContent='Loading index and option minute candles…';c.run=await simulateOptions(c.p,common,load);return}if(c.rows)return;$('runMessage').textContent='Loading observed minute candles…';
  const first=Date.parse(common.from),last=Date.parse(common.to);
  const useFyers=['Equity','Index'].includes(c.p.mode)&&!!session;
  if(!Number.isFinite(first)||!Number.isFinite(last)||last<first)throw Error('Check the selected dates.');
@@ -227,16 +230,50 @@ function builderPage(){
  if(!rows.length)throw Error(c.p.s+' · No minute candles in this date range.');
  c.p.source=[...providers].join(' / ')+' · observed minute candles · '+c.p.s;
  c.rows=rows;
- }))}finally{button.disabled=false}if(!form.isConnected)return;
- const runs=configs.map(({p,rows,run})=>run||simulate(rows,{...p,...common}));let shared=new Set(runs[0].trades.map(t=>t.entryDay));for(let r of runs){let dates=new Set(r.trades.map(t=>t.entryDay));shared=new Set([...shared].filter(d=>dates.has(d)))}
- let trades=runs.flatMap((r,i)=>r.trades.filter(t=>shared.has(t.entryDay)).map(t=>({...t,s:t.s||r.p.s,side:r.p.side,qty:t.qty??r.p.qty,stop:r.p.stop,stopUnit:r.p.stopUnit,leg:i+1}))).sort((a,b)=>(a.d+a.exit).localeCompare(b.d+b.exit)||a.leg-b.leg);
+ }));
+ if(loaded.some(r=>r.status==='rejected')){
+  if(!form.isConnected)return;
+  $('results').innerHTML='<section class="panel"><h2>Data by leg</h2>'+table(['Leg','Instrument','History'],loaded.map((r,i)=>[i+1,esc(configs[i].p.s),r.status==='fulfilled'?'Loaded':esc(r.reason.message)]))+'</section>';
+  $('runMessage').textContent='Incomplete run · one or more legs could not load for these dates.';return;
+ }
+ }finally{button.disabled=false}if(!form.isConnected)return;
+ const runs=configs.map(({p,rows,run})=>run||simulate(rows,{...p,...common}));
+ const stockDates=configs.map(c=>c.rows?new Set(c.rows.filter(b=>b.d>=common.from&&b.d<=common.to).map(b=>b.d)):null);
+ const observed=new Set(stockDates.flatMap(set=>set?[...set]:[]));
+ for(const [i,days] of stockDates.entries())if(days){
+  for(const d of observed)if(!days.has(d))runs[i].skipped.push(d);
+ }
+ const together=submitted.mode!=='Basket'||submitted.common.basketPolicy==='Require every leg to qualify';
+ let shared=new Set(runs[0].trades.map(t=>t.entryDay));
+ if(together)for(const r of runs.slice(1)){
+  const dates=new Set(r.trades.map(t=>t.entryDay));shared=new Set([...shared].filter(d=>dates.has(d)));
+ }
+ let trades=runs.flatMap((r,i)=>r.trades.filter(t=>!together||shared.has(t.entryDay)).map(t=>({...t,s:t.s||r.p.s,side:r.p.side,qty:t.qty??r.p.qty,stop:r.p.stop,stopUnit:r.p.stopUnit,leg:i+1}))).sort((a,b)=>(a.d+a.exit).localeCompare(b.d+b.exit)||a.leg-b.leg);
  const limits={target:+$('algoTarget').value,stop:+$('algoStop').value,tu:$('algoTU').value,su:$('algoSU').value};
- if(limits.target||limits.stop)trades=applyAlgoTargets(trades,configs,common,limits);
+ if(limits.target||limits.stop){
+  const incomplete=new Set(runs.flatMap(r=>r.skipped));
+  trades=applyAlgoTargets(trades.filter(t=>!incomplete.has(t.entryDay)),configs,common,limits);
+ }
  for(const t of trades)delete t.marks;
- let net=0,peak=0,dd=0,value=0;for(let t of trades){net+=t.net;peak=Math.max(peak,net);t.cum=net;t.dd=net-peak;dd=Math.min(dd,t.dd);value+=t.qty*t.ep;t.tip=t.d+' '+t.exit+' · '+t.s+' · Net ₹'+fmt(t.net)+' · Cumulative ₹'+fmt(net)}
+ let net=0,peak=0,dd=0,value=0;
+ for(let i=0;i<trades.length;){
+  let j=i;
+  while(j<trades.length&&trades[j].d===trades[i].d&&trades[j].exit===trades[i].exit){
+   net+=trades[j].net;value+=trades[j].qty*trades[j].ep;j++;
+  }
+  peak=Math.max(peak,net);dd=Math.min(dd,net-peak);
+  for(const trade of trades.slice(i,j)){trade.cum=net;trade.dd=net-peak}
+  i=j;
+ }
+ const legStats=runs.map((run,i)=>{
+  const fills=trades.filter(t=>t.leg===i+1);
+  return {name:run.p.s,side:run.p.side,eligible:run.trades.length,fills:fills.length,skipped:run.skipped.length,
+   gross:fills.reduce((n,t)=>n+t.gross,0),charges:fills.reduce((n,t)=>n+t.charges,0),net:total(fills)};
+ });
+ const issues=runs.flatMap((run,i)=>(run.issues||[]).map(x=>({...x,leg:i+1})));
  let p={...runs[0].p,limits,legs:runs.map(r=>r.p),s:configs.map(c=>c.p.s).join(' + '),id:configs.map(c=>c.p.id).join('|'),source:runs.map(r=>r.p.source).join(' / ')};
  const prices=configs.flatMap(c=>c.run?c.run.prices:[{name:c.p.s,bars:dailyOHLC(c.rows.filter(row=>row.d>=common.from&&row.d<=common.to))}]).filter(x=>x?.bars.length);
- lastRun={definition:submitted,savedId:editing?.id,p,trades,prices,net,dd,ret:value?100*net/value:0,win:trades.length?100*trades.filter(t=>t.net>0).length/trades.length:0,skipped:[...new Set(runs.flatMap(r=>r.skipped))]};lastMonth='';$('runMessage').textContent=displayDates(common.from+' – '+common.to)+' · '+shared.size+' trading sessions with entries · '+lastRun.skipped.length+' skipped sessions';if(editing){const name=$('editName').value.trim()||editing.name;await storeStrategy({...lastRun,id:editing.id,name,pending:false})}showResults();
+ lastRun={legStats,issues,definition:submitted,savedId:editing?.id,p,trades,prices,net,dd,ret:value?100*net/value:0,win:trades.length?100*trades.filter(t=>t.net>0).length/trades.length:0,skipped:[...new Set(runs.flatMap(r=>r.skipped))]};lastMonth='';$('runMessage').textContent=displayDates(common.from+' – '+common.to)+' · '+new Set(trades.map(t=>t.entryDay)).size+' trading sessions with entries · '+lastRun.skipped.length+' skipped sessions';if(editing){const name=$('editName').value.trim()||editing.name;await storeStrategy({...lastRun,id:editing.id,name,pending:false})}showResults();
  }catch(err){$('results').replaceChildren();$('runMessage').textContent=err.message}};
 }
 segmentedIds.add('algoTU');segmentedIds.add('algoSU');segmentedIds.add('strategyMode');segmentedIds.add('holding');
