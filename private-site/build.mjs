@@ -14,6 +14,7 @@ for(const file of ['historical-minutes','monthly-research']){
  const bytes=await readFile('dist/market/'+file+'.json');
  html=html.replaceAll("'market/"+file+".json'","'data:application/json;base64,"+bytes.toString('base64')+"'");
 }
+await copyFile('dist/market-data-notices.txt','published/market-data-notices.txt');
 await mkdir('published/market',{recursive:true});
 for(const file of ['breadth-universe.json','caps.json','shares.json','contracts.json','opening-baskets.json.gz','stock-baskets.json.gz','option-window.json.gz','retired-options.json'])
  await copyFile('dist/market/'+file,'published/market/'+file);

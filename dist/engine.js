@@ -51,12 +51,19 @@ function simulate(rows,p){
     let a=day.filter(r=>r.m>=p.entry&&r.m<=(overnight?929:p.exit));
     if(overnight){let dates=[...groups.keys()],offset=dates.indexOf(d),count=p.holdDays??1,next=dates[offset+count];if(!next||(p.expiry&&next>p.expiry)||p.exit>929||p.entry<555||a.length!==930-p.entry){skipped.push(d);continue}let tail=groups.get(next).filter(r=>r.m>=555&&r.m<=p.exit);if(tail.length!==p.exit-554){skipped.push(d);continue}const middle=dates.slice(offset+1,offset+count).map(date=>groups.get(date).filter(r=>r.m>=555&&r.m<930));if(middle.some(session=>session.length!==375)){skipped.push(d);continue}exitDay=next;a=a.concat(...middle,tail)}
 
-    if((!overnight&&a.length!==p.exit-p.entry+1)||a[0]?.m!==p.entry||a.at(-1)?.m!==p.exit){skipped.push(d);continue}
+    if(a[0]?.m!==p.entry||(overnight&&a.at(-1)?.m!==p.exit)){skipped.push(d);continue}
+    // A later missing minute cannot invalidate an earlier observed stop or target.
+    // A still-open position cannot be priced across that gap.
+    if(!overnight){
+      const gap=a.findIndex((r,i)=>r.m!==p.entry+i);
+      if(gap>=0)a=a.slice(0,gap);
+    }
+    const incompleteTail=!overnight&&a.at(-1)?.m!==p.exit;
     let fill=a[0].o,touched=false;
     if(['Price above','Price below','Limit price'].includes(p.rule)){
       const limit=p.ruleValue,buy=p.side==='Buy';
       const idx=a.findIndex(r=>r.d===d&&(overnight||r.m<p.exit)&&(p.rule==='Price above'?r.o>limit:p.rule==='Price below'?r.o<limit:buy?r.l<=limit:r.h>=limit));
-      if(idx<0)continue;
+      if(idx<0){if(incompleteTail)skipped.push(d);continue;}
       a=a.slice(idx);fill=a[0].o;
       if(p.rule==='Limit price'){fill=buy?Math.min(fill,limit):Math.max(fill,limit);touched=fill!==a[0].o}
     }else if(p.rule&&p.rule!=='Market price'&&!entryMatches(a[0],p))continue;
@@ -74,6 +81,7 @@ function simulate(rows,p){
       if(hit(sign>0?r.h:r.l,target,sign)){reason='Target';out=target;m=r.m;fillDay=r.d;break}
       best=sign>0?Math.max(best,r.h):Math.min(best,r.l);
     }
+    if(incompleteTail&&reason==='Timed exit'){skipped.push(d);continue}
     let xp=out*(1-sign*slip),gross=sign*(xp-ep)*p.qty,charges=costs(p,ep,xp),net=gross-charges;
     if(overnight&&fillDay!==d)busyUntil=fillDay;cum+=net;peak=Math.max(peak,cum);dd=Math.min(dd,cum-peak);
     trades.push({d:fillDay,entryDay:d,entry:timeOf(a[0].m),exit:timeOf(m),ep,xp,entryRef:fill,slippageCost:sign*((out-fill)-(xp-ep))*p.qty,gross,charges,net,cum,dd:cum-peak,reason,tip:fillDay+' '+timeOf(m)+' IST\nTrade ₹'+fmt(net)+'\nCumulative ₹'+fmt(cum)+'\nDrawdown ₹'+fmt(cum-peak)});

@@ -3,6 +3,7 @@ function builderPage(){
  const editing=saved.find(s=>s.id===editingStrategyId);editingStrategyId=null;
  const rangeEnd=new Date(Date.now()+19800000).toISOString().slice(0,10);
  $('app').innerHTML=heading('Strategy studio','Backtester','Build a strategy from minute candles. Times are in IST.',importButton+' <a class="button" href="#sector-momentum">Sector momentum</a> <button onclick="strategyLibrary()">Saved strategies</button>')+'<form id="strategy" class="panel"><div class="row">'+select('Strategy','strategyMode',['Options','Stock','Basket'])+'<button type="button" id="addLeg">＋ Add leg</button></div>'+select('Basket entries','basketPolicy',['Each stock follows its rule','Require every leg to qualify'])+'<div class="fields">'+select('Dates','bp',['7D','15D','30D','1Y','3Y','5Y','Custom'])+input('From','bf',presetStart(rangeEnd,'7D'),'date')+input('Through','bt',rangeEnd,'date')+'</div><div id="legs"></div><h3>Algo targets · all legs</h3><div class="fields">'+riskField('Total profit target','algoTarget','algoTU',0)+riskField('Total stop loss','algoStop','algoSU',0)+'</div><p class="hint">Checked at each minute open using combined gross P&amp;L. % uses entry value. Points sum the signed moves per leg. Zero is off.</p><h3>Daily transactions</h3><div class="fields">'+input('Transactions per day','maxEntries',1,'number','readonly')+'</div><h3>Algo expiry and exit</h3><div class="fields">'+ select('Trade type','holding',['Intraday','Delivery'])+select('Delivery exit','deliveryBasis',['Sessions after entry','Sessions before expiry'])+input('Trading sessions','deliveryN',1,'number','min="0" step="1"')+input('Delivery exit · IST','deliveryTime','15:15','time')+input('Algo entry from · IST','algoStart','09:15','time')+input('Algo exit by · IST','algoEnd','15:29','time')+input('Slippage · bps per fill','slip',0,'number','min="0" step="any"')+'</div><div class="row"><button class="primary">Run backtest</button></div><p role="status" id="runMessage"></p><details><summary>Execution rules</summary>Price above and below use the first qualifying minute open after the entry window starts. Limit orders fill at the limit or a better open. For a limit touched inside a candle, only an adverse stop can exit in that candle. Each stock can enter once per eligible day. For baskets, choose whether entries follow each stock’s rule or require every leg to qualify on the same day. Automatic re-entry is off. Stops take priority inside an ambiguous candle. Gaps fill at the open. Incomplete candle windows skip the session. Delivery uses the selected session count and the earlier applicable exit time.</details></form><div id="results"></div>';
+ $('strategy').insertAdjacentHTML('afterend','<p><a href="#intraday-study">Compare intraday hedge tests</a> · <a href="market-data-notices.txt" target="_blank" rel="noopener">Market data sources</a></p>');
  const legs=$('legs'),sources=[...[...groups.flat(),'NIFTY 50','SENSEX','BANKNIFTY','NIFTY MIDCAP 100'].map(s=>({s,id:'market:'+s,title:s+' · Market minute candles'})),...testSources().filter(x=>!x.id.startsWith('demo:'))];
  equityDirectory().then(rows=>{
   const bySymbol=new Map(sources.filter(x=>x.id.startsWith('market:')).map(x=>[x.s,x]));
@@ -189,11 +190,10 @@ function builderPage(){
  button.disabled=true;
  let sessionDates=null;
  const live=configs.every(c=>!c.rows);
- if(live){
-  try{sessionDates=await exchangeDays(common.from,common.to)}catch{}
-  if(!form.isConnected)return;
-  if(sessionDates&&!sessionDates.length){button.disabled=false;$('runMessage').textContent='No completed exchange sessions in the selected dates.';return}
- }
+ if(!common.from||!common.to||common.from>common.to){button.disabled=false;throw Error('Choose a valid start and end date.')}
+ const optionOnly=configs.every(c=>c.p.mode==='Options');
+ const calendarPromise=live&&!optionOnly?exchangeDays(common.from,common.to).catch(()=>null):Promise.resolve(null);
+ $('runMessage').textContent='Finding observed trading sessions…';
  const optionData=new Map();
  async function load(symbol,key,from,to){
   if(!key&&session&&['NIFTY 50','SENSEX'].includes(symbol))return archivedMinutes(symbol==='SENSEX'?'BSE_INDEX|SENSEX':'NSE_INDEX|Nifty 50',from,to);
@@ -244,8 +244,11 @@ function builderPage(){
   $('runMessage').textContent='Incomplete run · one or more legs could not load for these dates.';return;
  }
  }finally{button.disabled=false}if(!form.isConnected)return;
+ sessionDates=await calendarPromise;
+ if(!form.isConnected)return;
  const runs=configs.map(({p,rows,run})=>run||simulate(rows,{...p,...common}));
  const stockDates=configs.map(c=>c.rows?new Set(c.rows.filter(b=>b.d>=common.from&&b.d<=common.to).map(b=>b.d)):c.run?.observedDays?new Set(c.run.observedDays):null);
+ if(optionOnly)sessionDates=[...new Set(runs.flatMap(r=>r.observedDays||[]))].sort();
  const observed=new Set([...(sessionDates||[]),...stockDates.flatMap(set=>set?[...set]:[])]);
  for(const [i,days] of stockDates.entries())if(days){
   for(const d of observed)if(!days.has(d)&&!runs[i].skipped.includes(d))runs[i].skipped.push(d);
@@ -284,7 +287,7 @@ function builderPage(){
  const issues=runs.flatMap((run,i)=>(run.issues||[]).map(x=>({...x,leg:i+1})));
  let p={...runs[0].p,limits,legs:runs.map(r=>r.p),s:configs.map(c=>c.p.s).join(' + '),id:configs.map(c=>c.p.id).join('|'),source:runs.map(r=>r.p.source).join(' / ')};
  const prices=configs.flatMap(c=>c.run?c.run.prices:[{name:c.p.s,bars:dailyOHLC(c.rows.filter(row=>row.d>=common.from&&row.d<=common.to))}]).filter(x=>x?.bars.length);
- lastRun={sessionDates,legStats,issues,definition:submitted,savedId:editing?.id,p,trades,prices,net,dd,ret:value?100*net/value:0,win:trades.length?100*trades.filter(t=>t.net>0).length/trades.length:0,skipped:[...new Set(runs.flatMap(r=>r.skipped))]};lastMonth='';$('runMessage').textContent=displayDates(common.from+' – '+common.to)+' · '+new Set(trades.map(t=>t.entryDay)).size+' trading sessions with entries · '+lastRun.skipped.length+' skipped sessions';if(editing){const name=$('editName').value.trim()||editing.name;await storeStrategy({...lastRun,id:editing.id,name,pending:false})}showResults();
+ lastRun={sessionDates,legStats,issues,definition:submitted,savedId:editing?.id,p,trades,prices,net,dd,ret:value?100*net/value:0,win:trades.length?100*trades.filter(t=>t.net>0).length/trades.length:0,skipped:[...new Set(runs.flatMap(r=>r.skipped))]};lastMonth='';$('runMessage').textContent=displayDates(common.from+' – '+common.to)+' · '+new Set(trades.map(t=>t.entryDay)).size+' trading sessions with entries · '+lastRun.skipped.length+' skipped sessions'+(lastRun.skipped.length?' · Partial result, P&L uses covered sessions only.':'');if(editing){const name=$('editName').value.trim()||editing.name;await storeStrategy({...lastRun,id:editing.id,name,pending:false})}showResults();
  }catch(err){$('results').replaceChildren();$('runMessage').textContent=err.message}};
 }
 segmentedIds.add('algoTU');segmentedIds.add('algoSU');segmentedIds.add('strategyMode');segmentedIds.add('holding');
