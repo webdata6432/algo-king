@@ -71,7 +71,7 @@ async function sellBasketPage(kind) {
     const periodDates = options ? {
       'Latest year': ['2025-11-28',end], 'Earlier year': [start,'2026-07-16']
     } : {'Latest year': [start,end], 'Development': [start,'2026-05-27'], 'Later test': ['2026-05-28',end]};
-    form.innerHTML = (options ? '<div class="actions"><button type="button" id="sbHedge">Expiry-day PE hedge</button><button type="button" id="sbPremium">Premium crossing</button><button type="button" id="sbFull">Full-day PE</button></div>' : '') + '<div class="fields">' + select('Strategy','sbRule',rules) +
+    form.innerHTML = (options ? '<div class="actions"><button type="button" id="sbHedge">Expiry-day PE hedge</button><button type="button" id="sbPremium">Premium crossing</button><button type="button" id="sbFull">Full-day PE</button><a class="btn" href="#sensex-atm-five">Five-year ATM CE / PE</a></div>' : '') + '<div class="fields">' + select('Strategy','sbRule',rules) +
       (options ? select('Position','sbWing',['unhedged','100-point hedge','300-point hedge','500-point hedge']) +
         select('Trading days','sbDays',['All sessions','Expiry days only']) +
         select('Stop · points','sbStop',['30','40']) + select('Time exit · IST','sbTime',['15:29','15:24']) +
@@ -181,4 +181,55 @@ async function sellBasketPage(kind) {
   } catch (err) {
     if (form.isConnected) form.textContent = 'Unable to open this private study. '+err.message;
   }
+}
+
+async function sensexFivePage() {
+  const app = $('app');
+  app.innerHTML = heading('Historical Backtest','SENSEX full-day ATM sells',
+    'One nearest-expiry contract at 09:16 IST. Compare the call and put separately after costs.',
+    '<a href="#sensex-sell">SENSEX strategies</a>') + '<section class="panel" id="fiveControls">Loading verified trades…</section><section class="panel" id="fiveResults" aria-live="polite"></section>';
+  const form = $('fiveControls'), output = $('fiveResults');
+  try {
+    const data = await privateArchiveJSON('research/sensex-atm-five-227d12e5b1db5f3b2422.gz');
+    if (!form.isConnected) return;
+    const end = '2026-11-27', start = '2021-11-28';
+    form.innerHTML = '<div class="fields">' + input('From','fiveFrom',start,'date','min="'+start+'" max="'+end+'"') +
+      input('Through','fiveTo',end,'date','min="'+start+'" max="'+end+'"') +
+      select('Time exit · IST','fiveExit',['15:29','15:24']) + select('Option','fiveSide',['CE','PE']) +
+      select('Stop · premium points','fiveStop',['30','40']) + input('Lots','fiveLots',1,'number','min="1" max="100" step="1"') +
+      select('Compare dates','fiveCompare',['All priced dates','Only dates priced for all four']) + '</div>';
+    function show() {
+      const from=$('fiveFrom').value, to=$('fiveTo').value, lots=Number($('fiveLots').value);
+      if (!from || !to || from<start || to>end || from>to || !Number.isInteger(lots) || lots<1 || lots>100) {
+        output.textContent='Choose valid dates in the study and 1–100 lots.'; return;
+      }
+      const variants=data.models.filter(m=>m.cutoff===$('fiveExit').value);
+      const commonOnly=$('fiveCompare').selectedIndex===1;
+      const daySets=variants.map(m=>new Set(m.fills.map(f=>f[0])));
+      const common=commonOnly?new Set(data.dates.filter(d=>daySets.every(set=>set.has(d)))):null;
+      const expected=data.dates.filter(d=>from<=d && d<=to);
+      const results=variants.map(model=>({model,stat:sectorSellSummary(model,data.fields,from,to,true,lots,common)}));
+      const picked=results.find(r=>r.model.rule===$('fiveSide').value && r.model.sl===Number($('fiveStop').value));
+      const {model,stat}=picked;
+      const net=(values,value)=>values.length?cash(value):'—';
+      const rows=results.map(({model:m,stat:s})=>[m.rule,m.sl,s.fills.length+' / '+expected.length,
+        net(s.fills,s.net),net(s.fills,-s.dd),s.fills.length?s.wins+' / '+s.fills.length:'—']);
+      output.innerHTML='<h2>Full-day comparison</h2>'+table(['Option','SL · pts','Trades / sessions','Net P&amp;L','Max drawdown','Wins / trades'],rows)+
+        '<p>Unpriced dates carry unknown P&amp;L. Historical lot sizes and estimated charges apply. A 15:29 exit may fall after broker intraday square-off.</p>'+
+        '<h2>'+model.rule+' sell · '+model.sl+' point SL</h2>'+metrics([['Net P&L',net(stat.fills,stat.net)],['Gross P&L',net(stat.fills,stat.gross)],['Charges',net(stat.fills,stat.fees)],['Slippage',net(stat.fills,stat.slip)]])+
+        plot(stat.curve,'net');
+      const years=[...new Set(expected.map(d=>d.slice(0,4)))];
+      const annual=years.map(y=>[y,expected.filter(d=>d.startsWith(y)).length,...results.map(({stat:s})=>{
+        const fills=s.fills.filter(f=>f.date.startsWith(y));
+        return fills.length?cash(fills.reduce((total,f)=>total+f.net,0))+' · '+fills.length:'—';
+      })]);
+      output.insertAdjacentHTML('beforeend','<h3>Calendar years</h3>'+table(['Year','Sessions',...results.map(r=>r.model.rule+' '+r.model.sl+' · net / trades')],annual));
+      const gapMap=new Map(model.sessions);
+      const gaps=expected.filter(d=>gapMap.get(d)!=='filled'||(common&&!common.has(d))).map(d=>[displayDates(d),esc(gapMap.get(d)==='filled'?'Another variant lacks price data':gapMap.get(d))]);
+      if(gaps.length) output.insertAdjacentHTML('beforeend','<details><summary>Excluded dates ('+gaps.length+')</summary>'+table(['Date','Reason'],gaps)+'</details>');
+      const log=stat.fills.map((t,i)=>['T/'+(i+1),displayDates(t.date),displayDates(t.expiry),fmt(t.spot),t.strike,t.qty,t.entry,t.exit,fmt(t.short_entry),fmt(t.short_exit),esc(t.reason),cash(t.net)]).reverse();
+      output.insertAdjacentHTML('beforeend','<h3>Trade log</h3>'+table(['ID','Date','Expiry','Spot','ATM strike','Qty','Entry','Exit','Sell fill','Buyback','Exit reason','Net'],log));
+    }
+    form.onchange=show; show();
+  } catch(err) { if(form.isConnected) form.textContent='Unable to load the SENSEX report. '+err.message; }
 }
